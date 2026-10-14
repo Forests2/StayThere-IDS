@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Windows 배치 파일은 CRLF 유지 (LF 로 바뀌면 cmd 에서 오동작할 수 있음)
+*.bat text eol=crlf
+
+# 이미지는 바이너리
+*.png binary
+*.jpg binary

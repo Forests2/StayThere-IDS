@@ -1,0 +1,4 @@
+pandas
+pyarrow
+scikit-learn
+joblib

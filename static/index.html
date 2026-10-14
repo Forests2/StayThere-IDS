@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDS 실시간 감시</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#22201C; --ink2:#3A362F; --muted:#5E574C; --cap:#6B6358;
+  --bg:#F3EEE4; --paper:#FBF8F2; --line:#ECE5D8; --line2:#D9D0C0; --white:#FFFFFF;
+  --red:#C2462E; --red2:#A93A24; --redbg:#FBE3DC; --redline:#F0C9A8;
+  --green:#2E7D5B; --amber:#C48A1E; --amber2:#7A5410; --amberbg:#FBEED3; --amberline:#F1DDB0;
+  --display:'Do Hyeon','Malgun Gothic',sans-serif;
+  --sans:'IBM Plex Sans KR','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  --mono:'IBM Plex Mono',Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px}
+button{font:inherit;cursor:pointer}
+.app{min-height:100vh;display:flex;flex-wrap:wrap}
+nav{flex:1 1 220px;max-width:100%;padding:24px 16px;border-right:1px solid var(--line2);display:flex;flex-direction:column;gap:24px}
+.brand{display:flex;align-items:center;gap:12px;padding:0 8px}
+.logo{width:36px;height:36px;border-radius:9px;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:22px}
+.brand b{font-family:var(--display);font-weight:400;font-size:28px}
+.menu{display:flex;flex-direction:column;gap:4px}
+.menu a{display:flex;align-items:center;justify-content:space-between;min-height:44px;padding:0 12px;border-radius:10px;color:var(--ink);text-decoration:none}
+.menu a.on{background:var(--ink);color:var(--paper);font-weight:600}
+.badge{min-width:22px;height:22px;padding:0 6px;border-radius:999px;background:var(--line2);color:var(--ink2);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.badge.hot{background:var(--red);color:#fff}
+.status{margin-top:auto;padding:14px;border-radius:12px;background:#ECE5D8;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none}
+.dot.bad{background:var(--red)} .dot.warn{background:var(--amber)}
+main{flex:999 1 560px;min-width:0;padding:32px 36px 48px;background:var(--paper);display:flex;flex-direction:column;gap:22px}
+.head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+.eyebrow{font-size:14px;color:var(--muted)}
+h1{margin:6px 0 0;font-family:var(--display);font-weight:400;font-size:44px;line-height:1.1}
+.btn{min-height:46px;padding:0 20px;border-radius:10px;border:1px solid var(--ink);background:transparent;color:var(--ink);font-weight:600;font-size:14px}
+.btn.dark{background:var(--ink);color:var(--paper)}
+.btn:disabled{opacity:.5;cursor:default}
+.row{display:flex;flex-wrap:wrap;gap:10px}
+.sensors{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.sensor{padding:16px;border-radius:14px;background:var(--white);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px;transition:background .3s,border-color .3s}
+.sensor .n{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.sensor .s{font-size:18px;font-weight:700}
+.sensor .h{font-size:12px;color:var(--cap)}
+.sensor.bad{background:var(--redbg);border-color:var(--redline)} .sensor.bad .s{color:var(--red2)}
+.sensor.warn{background:var(--amberbg);border-color:var(--amberline)} .sensor.warn .s{color:var(--amber2)}
+.split{display:flex;flex-wrap:wrap;gap:18px}
+.card{padding:22px 24px;border-radius:16px;background:var(--white);border:1px solid var(--line);display:flex;flex-direction:column}
+.card h2{margin:0;font-size:17px;font-weight:700}
+.card .top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;padding-bottom:12px}
+.cap{font-size:13px;color:var(--cap)}
+.line{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--line);font-size:14px}
+.ts{font-family:var(--mono);font-size:13px;color:var(--cap);width:72px}
+.sim{font-size:11px;font-weight:700;color:var(--amber2);background:var(--amberbg);padding:2px 6px;border-radius:5px}
+.last{flex:2 1 300px;min-width:0;padding:22px;border-radius:16px;background:var(--ink);color:var(--paper);display:flex;flex-direction:column;gap:14px}
+.last .pic{border-radius:12px;overflow:hidden;height:190px;background:var(--ink2)}
+.last .pic img{width:100%;height:100%;object-fit:cover;object-position:75% 40%;display:block}
+.last .t{font-family:var(--display);font-size:28px;line-height:1.15}
+.last .cap{color:#C9BFAE}
+.last .btn{border-color:var(--muted);color:var(--paper)}
+.hero{position:relative;height:380px;border-radius:18px;overflow:hidden;background:var(--ink)}
+.hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 35%}
+.hero .shade{position:absolute;inset:0;background:rgba(22,18,16,.58)}
+.hero .txt{position:absolute;left:0;right:0;bottom:0;padding:32px 36px;display:flex;flex-direction:column;gap:12px;color:var(--paper)}
+.hero h1{font-size:56px;margin:0}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;font-size:13px;font-weight:700}
+.pill.red{background:var(--red)} .pill.out{border:1px solid rgba(251,248,242,.6);font-weight:600}
+.pill.red .dot{background:var(--paper);animation:blink 1s infinite}
+.pill.amber{background:#E0A93A;color:var(--ink)} .pill.amber .dot{background:var(--ink)}
+.pill.line{border:1px solid var(--amberline);background:var(--white);color:var(--amber2);font-weight:600}
+.localnote{display:inline-flex;margin-top:10px;padding:8px 14px;border-radius:10px;background:var(--bg);color:var(--muted);font-size:13px;text-decoration:none}
+.localnote:hover{color:var(--ink)}
+.checkhead{padding:26px 30px;border-radius:18px;background:var(--amberbg);border:1px solid var(--amberline);display:flex;flex-direction:column;gap:10px}
+.checkhead h1{margin:0;font-size:44px}
+.csub{font-size:15px;color:var(--amber2)}
+.chk .fact{border-color:var(--amberline)} .chk .fact .l{color:var(--amber2)}
+.chk .num{background:var(--amberbg);color:var(--amber2)}
+.chk .chainbar b{border-color:var(--amberline);color:var(--amber2)}
+.chk .act.first{background:#E0A93A;border-color:#E0A93A;color:var(--ink)}
+@keyframes blink{50%{opacity:.2}}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.fact{padding:20px;border-radius:14px;background:var(--white);border:1px solid var(--redline);display:flex;flex-direction:column;gap:6px}
+.fact .l{font-size:13px;font-weight:600;color:var(--red2)}
+.fact .m{font-family:var(--mono);font-size:19px;font-weight:500;word-break:break-all}
+.fact .s{font-size:13px;color:var(--muted)}
+.num{width:26px;height:26px;border-radius:50%;background:var(--redbg);color:var(--red2);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.num.med{background:var(--amberbg);color:var(--amber2)}
+.rule{font-family:var(--mono);font-size:13px;padding:3px 10px;border-radius:6px;background:var(--bg);color:var(--ink2)}
+.cat{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--muted);white-space:nowrap}
+.cat b{color:var(--red2);font-weight:600;margin-left:4px}
+.chainbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 16px;margin-bottom:12px;border-radius:12px;background:var(--bg)}
+.chainbar .steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.chainbar b{font-family:var(--mono);font-size:14px;font-weight:500;padding:4px 12px;border-radius:8px;background:var(--white);border:1px solid var(--redline);color:var(--red2)}
+.chainbar .arr{color:var(--cap)}
+.acts{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:20px 24px;border-radius:16px;background:var(--ink)}
+.acts span{color:var(--paper);font-weight:600;margin-right:8px}
+.act{min-height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--muted);background:transparent;color:var(--paper);font-weight:600;font-size:14px}
+.act.first{background:var(--red);border-color:var(--red);color:#fff}
+.back{margin-left:auto;min-height:44px;padding:0 16px;border:none;background:transparent;color:#C9BFAE;font-size:14px;text-decoration:underline}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);max-width:calc(100% - 32px);padding:14px 20px;border-radius:12px;background:var(--ink);color:var(--paper);font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.2);display:none;z-index:10}
+.toast.err{background:var(--red2)}
+.warnbar{padding:12px 16px;border-radius:12px;background:var(--amberbg);color:var(--amber2);font-size:13px}
+.view{display:flex;flex-direction:column;gap:22px}
+.menu a .dot{background:var(--red);animation:blink 1s infinite}
+.menu a.on .badge{background:var(--paper);color:var(--ink)}
+.chip{min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line2);background:var(--white);color:var(--ink);font-size:13px;font-weight:600}
+.chip.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.toggle{display:flex;align-items:center;gap:8px;min-height:40px;padding:0 6px;font-size:13px;color:var(--muted)}
+.toggle input{width:18px;height:18px;accent-color:var(--ink)}
+.tbl{overflow-x:auto}
+table{width:100%;min-width:720px;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-size:12px;font-weight:500;color:var(--cap);padding:10px 12px;border-bottom:1px solid var(--line2);white-space:nowrap}
+td{padding:12px;border-bottom:1px solid var(--line);vertical-align:middle}
+td.mono,.mono{font-family:var(--mono);font-size:13px}
+td.nowrap{white-space:nowrap}
+.sev{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
+.sev.HIGH{background:var(--redbg);color:var(--red2)} .sev.MEDIUM{background:var(--amberbg);color:var(--amber2)}
+.sev.LOW{background:var(--bg);color:var(--muted)}
+.mini{min-height:36px;padding:0 12px;border-radius:8px;border:1px solid var(--line2);background:var(--white);color:var(--ink);font-size:13px;font-weight:600;white-space:nowrap}
+.mini.red{border-color:var(--red);background:var(--red);color:#fff}
+.mini.ghost{border-color:transparent;background:transparent;color:var(--muted);text-decoration:underline}
+.empty{padding:28px 0;text-align:center;color:var(--cap);font-size:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.stat{padding:18px 20px;border-radius:14px;background:var(--white);border:1px solid var(--line);display:flex;flex-direction:column;gap:4px}
+.stat b{font-family:var(--display);font-weight:400;font-size:34px;line-height:1.1}
+.stat.hot{background:var(--redbg);border-color:var(--redline)} .stat.hot b{color:var(--red2)}
+.stat.warn{background:var(--amberbg);border-color:var(--amberline)} .stat.warn b{color:var(--amber2)}
+.badge.amber{background:#E0A93A;color:var(--ink)}
+.inline{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.inline input{min-height:44px;min-width:0;flex:1 1 180px;padding:0 14px;border-radius:10px;border:1px solid var(--line2);background:var(--white);font:inherit;font-size:14px}
+.head .inline{margin-top:0}
+.wchip{display:inline-flex;align-items:center;gap:6px;padding:4px 4px 4px 12px;border-radius:999px;background:var(--bg);font-family:var(--mono);font-size:13px}
+.wchip button{width:28px;height:28px;border-radius:50%;border:none;background:transparent;color:var(--muted);font-size:16px}
+.incgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.inc{border-radius:14px;overflow:hidden;background:var(--white);border:1px solid var(--line);display:flex;flex-direction:column}
+.inc .pic{position:relative;height:120px;background:var(--ink)}
+.inc .pic img{width:100%;height:100%;object-fit:cover;object-position:75% 40%;display:block;opacity:.75}
+.inc .pic span{position:absolute;left:12px;top:12px}
+.inc .pic .sim{position:absolute;right:12px;left:auto;top:12px}
+.inc .body{padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.inc .t{font-family:var(--display);font-size:24px;line-height:1.15}
+.inc details{border-top:1px solid var(--line);padding:10px 16px}
+.inc summary{cursor:pointer;font-size:13px;font-weight:600;min-height:32px;display:flex;align-items:center}
+.inc .stepl{font-size:13px;padding:6px 0;border-top:1px dashed var(--line);display:flex;gap:10px}
+.tagchip{display:inline-flex;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:var(--red);color:#fff}
+.tagchip.hk{background:var(--ink2)} .tagchip.chk{background:#E0A93A;color:var(--ink)}
+.chainmini{display:flex;flex-wrap:wrap;gap:4px;font-family:var(--mono);font-size:12px;color:var(--red2)}
+.risk{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600}
+.risk.high{color:var(--amber2)} .risk.med{color:var(--amber2)} .risk.low{color:var(--green)}
+.domain{display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:6px;background:var(--bg);font-family:var(--mono);font-size:12px}
+.flag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:700;margin-right:4px}
+.flag.ioc{background:var(--redbg);color:var(--red2)} .flag.blk{background:var(--ink);color:var(--paper)}
+.flag.watch{background:var(--bg);color:var(--muted)}
+.ok{color:var(--green);font-size:13px;font-weight:600}
+.flag.seen{background:var(--amberbg);color:var(--amber2)} .flag.lan{background:var(--bg);color:var(--muted)}
+.gtab{min-height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--line2);background:var(--white);font-weight:600;font-size:14px}
+.gtab.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.gstep{padding:18px 20px;border-radius:14px;background:var(--white);border:1px solid var(--line);display:flex;gap:16px}
+.gstep .no{width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.gstep h3{margin:0 0 4px;font-size:16px}
+.gstep p{margin:0;color:var(--muted);font-size:14px;line-height:1.6}
+.code{margin-top:10px;display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:var(--ink);color:#F1EADC;font-family:var(--mono);font-size:13px;overflow-x:auto}
+.code code{flex:1;white-space:pre}
+.code button{flex:none;min-height:32px;padding:0 10px;border-radius:6px;border:1px solid var(--muted);background:transparent;color:#F1EADC;font-size:12px}
+.ipres{margin-top:16px;padding:20px;border-radius:14px;background:var(--paper);border:1px solid var(--line)}
+.ipres.high{border-color:var(--redline);background:#FFF8F5}
+.ipv{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.verdict{padding:6px 14px;border-radius:999px;font-weight:700;font-size:14px;background:var(--bg);color:var(--muted)}
+.verdict.high{background:var(--red);color:#fff} .verdict.med{background:var(--amberbg);color:var(--amber2)}
+.verdict.low{background:#DDF0E5;color:var(--green)}
+.reasons{margin:12px 0 0;padding-left:20px;color:var(--red2);font-size:14px;line-height:1.7}
+.h3{margin:20px 0 6px;font-size:15px}
+.jhead{display:flex;flex-wrap:wrap;align-items:center;gap:18px}
+.jverdict{display:inline-flex;padding:8px 16px;border-radius:999px;font-weight:700;font-size:15px;background:var(--bg);color:var(--muted)}
+.jverdict.ai{background:var(--red);color:#fff} .jverdict.auto{background:#E0A93A;color:var(--ink)}
+.jverdict.human{background:var(--ink2);color:var(--paper)}
+.jverdict.small{font-size:12px;padding:4px 10px;align-self:flex-start}
+.jbar{display:flex;align-items:center;gap:10px;flex:1 1 260px}
+.bar{flex:1;height:10px;border-radius:999px;background:var(--bg);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ink);border-radius:999px;transition:width .4s}
+.jlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.jlist li{display:flex;gap:10px;align-items:flex-start;line-height:1.5}
+.jlist li span{width:22px;height:22px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.jlist li.y span{background:var(--redbg);color:var(--red2)} .jlist li.n span{background:var(--bg);color:var(--cap)}
+.jlist li.n{color:var(--cap)}
+.sw{display:inline-flex;align-items:center;gap:10px;min-height:46px;padding:0 16px 0 8px;border-radius:999px;border:1px solid var(--line2);background:var(--white);font-weight:600;font-size:14px;color:var(--muted)}
+.sw .knob{width:44px;height:26px;border-radius:999px;background:var(--line2);position:relative;transition:background .2s}
+.sw .knob::after{content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s}
+.sw.on{border-color:var(--red);color:var(--red2)} .sw.on .knob{background:var(--red)} .sw.on .knob::after{left:21px}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 16px}
+.form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:600}
+.form label.toggle{flex-direction:row;align-items:center;font-weight:500}
+.form input:not([type=checkbox]),.form select{min-height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line2);background:var(--white);font:inherit;font-size:14px;color:var(--ink);min-width:0}
+.embtn{min-height:52px;border-radius:12px;border:2px solid var(--red);background:var(--red);color:#fff;font-weight:800;font-size:16px;letter-spacing:.02em}
+.embtn:hover{background:var(--red2)}
+.embtn:disabled{cursor:default;opacity:.85}
+.emgroup{display:flex;flex-direction:column;gap:8px}
+.emrelease{min-height:46px;border-radius:12px;border:2px solid var(--line2);background:var(--white);color:var(--cap);font-weight:700;font-size:15px}
+.emrelease:disabled{cursor:not-allowed;opacity:.6}
+.emrelease.live{border-color:var(--green);background:var(--green);color:#fff;animation:blink 1.4s infinite}
+.embtn.on{background:var(--white);color:var(--red2)}
+.embanner{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:16px 20px;border-radius:14px;background:var(--red);color:#fff}
+.embanner .btn{border-color:#fff;color:#fff}
+.act.emact{border-color:var(--red);color:#FFB8A6}
+.jverdict.fp{background:#DDF0E5;color:var(--green)}
+.raw{white-space:pre-wrap;font-family:var(--mono);font-size:12px;background:var(--bg);padding:12px;border-radius:10px;max-height:240px;overflow:auto}
+.aiprog{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:12px;background:var(--ink);color:var(--paper);font-size:13px;line-height:1.5}
+.aiprog .pl.running{color:#F1D58A} .aiprog .pl.done{color:#9BE0B8} .aiprog .pl.failed{color:#FFB8A6}
+.aiprog.wide{font-size:15px;padding:16px 20px}
+#llmDot{background:#E0A93A;color:var(--ink);font-size:11px}
+.gintro{padding:16px 20px;border-radius:14px;background:var(--bg);font-size:14px;line-height:1.6}
+[hidden]{display:none!important}
+@media (max-width:640px){main{padding:24px 16px}.hero{height:300px}.hero h1{font-size:40px}h1{font-size:36px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav aria-label="메뉴">
+    <div class="brand"><span class="logo">D</span><b>DDS</b></div>
+    <div class="menu">
+      <a href="#live" data-view="live">실시간 감시<span id="liveDot" class="dot" hidden></span></a>
+      <a href="#history" data-view="history">침입 기록<span id="badge" class="badge">0</span></a>
+      <a href="#ai" data-view="ai">AI 도구 탐지<span id="aiBadge" class="badge" hidden>0</span></a>
+      <a href="#ips" data-view="ips">위협 IP 목록</a>
+      <a href="#rules" data-view="rules">규칙 리포트</a>
+      <a href="#guide" data-view="guide">조치 가이드</a>
+      <a href="#llm" data-view="llm">AI 분석관<span id="llmDot" class="badge" hidden>…</span></a>
+    </div>
+    <div id="aiProg" class="aiprog" role="status" aria-live="polite" hidden></div>
+    <div class="emgroup">
+      <button id="emBtn" class="embtn" type="button">긴급 차단</button>
+      <button id="emRelease" class="emrelease" type="button" disabled>긴급 차단 해제</button>
+    </div>
+    <div class="status"><span id="statusDot" class="dot"></span>
+      <div style="display:flex;flex-direction:column"><span id="statusText">실시간 감시 중</span><span id="hostText">센서 5개 연결됨</span></div>
+    </div>
+  </nav>
+
+  <main>
+    <div id="warns"></div>
+    <div id="emBanner" class="embanner" role="alert" hidden><b>긴급 격리 중</b><span id="emText" style="flex:1 1 300px"></span><button id="emOff" class="btn" type="button">긴급 차단 해제</button></div>
+
+  <div id="view-live" class="view">
+    <!-- 평상시 -->
+    <div id="safeHead" class="head">
+      <div><div class="eyebrow">실시간 감시 · 마지막 수집 <span id="lastScan">-</span></div><h1 id="safeTitle">지금은 안전해요</h1><a id="localNote" class="localnote" href="#ai" hidden></a></div>
+      <div class="row" style="align-items:center">
+        <button id="autoSw" class="sw" role="switch" aria-checked="false"><span class="knob"></span><span id="autoSwText">자동 대응 꺼짐</span></button>
+        <button class="btn dark" data-sim="ai">AI 도구 침입 테스트</button>
+        <button class="btn" data-sim="hacker">해커 침입 테스트</button>
+        <button class="btn" data-sim="net">이상 IP 테스트</button>
+      </div>
+    </div>
+
+    <!-- 침입 경보 -->
+    <section id="hero" class="hero" aria-label="침입 경보" hidden>
+      <img src="/alert.jpg" alt="침입 경보 이미지">
+      <div class="shade"></div>
+      <div class="txt">
+        <div class="row"><span id="pill" class="pill red"><span class="dot"></span><span id="pillText">침입 감지</span></span><span id="tag" class="pill out"></span></div>
+        <h1 id="title"></h1>
+        <span id="sub" style="font-size:16px;color:#F1EADC"></span>
+      </div>
+    </section>
+
+    <section id="checkHead" class="checkhead" aria-label="확인 필요" hidden>
+      <div class="row"><span class="pill amber"><span class="dot"></span>확인 필요</span><span id="ctag" class="pill line"></span></div>
+      <h1 id="ctitle"></h1>
+      <span id="csub" class="csub"></span>
+    </section>
+
+    <section id="sensors" class="sensors" aria-label="센서 상태"></section>
+
+    <div id="safeBody" class="split">
+      <section class="card" style="flex:3 1 420px;min-width:0" aria-label="이벤트 스트림">
+        <div class="top"><h2>이벤트 스트림</h2><span class="cap">수집된 최신 기록</span></div>
+        <div id="stream"></div>
+      </section>
+      <section class="last" aria-label="마지막 탐지">
+        <span class="cap">마지막 탐지</span>
+        <div class="pic"><img src="/alert.jpg" alt="침입 경보 이미지"></div>
+        <span id="lastTitle" class="t">탐지 기록 없음</span>
+        <span id="lastSub" class="cap">침입이 감지되면 여기에 남아요</span>
+      </section>
+    </div>
+
+    <div id="alertBody" hidden style="display:flex;flex-direction:column;gap:22px">
+      <section id="facts" class="facts" aria-label="누가 무엇이 어디로"></section>
+      <section class="card" aria-label="AI 공격 프로그램 판별">
+        <div class="top"><h2>AI 공격 프로그램인가?</h2><span class="cap">기계 속도(사람이 아닌가) + AI 직접 증거(AI 도구인가) 로 판별</span></div>
+        <div class="jhead"><span id="jVerdict" class="jverdict"></span>
+          <div class="jbar"><span class="cap">기계 속도 점수</span><div class="bar"><i id="jBar"></i></div><b id="jScore" class="mono"></b></div></div>
+        <div class="split" style="margin-top:14px">
+          <div style="flex:1 1 300px;min-width:0"><h3 class="h3" style="margin-top:0">기계 속도 근거</h3><ul id="jSpeed" class="jlist"></ul></div>
+          <div style="flex:1 1 300px;min-width:0"><h3 class="h3" style="margin-top:0">AI 근거</h3><ul id="jAI" class="jlist"></ul></div>
+        </div>
+      </section>
+      <section class="card" aria-label="공격 흐름">
+        <div class="top"><h2>공격 흐름</h2><span class="cap">탐지 규칙이 발동한 순서</span></div>
+        <div id="chain" class="chainbar" hidden></div>
+        <div id="steps"></div>
+      </section>
+      <section id="llmCard" class="card" aria-label="AI 분석관">
+        <div class="top"><h2>AI 분석관</h2><span id="llmCardState" class="cap" style="flex:1 1 200px"></span><button class="btn" data-llmanalyze="1">AI 분석관에게 묻기</button></div>
+        <div id="llmCardBody"></div>
+      </section>
+      <section id="autoCard" class="card" aria-label="자동 대응">
+        <div class="top"><h2>즉각 대응</h2><span id="autoState" class="cap"></span></div>
+        <div id="autoList"></div>
+      </section>
+      <section class="acts" aria-label="조치">
+        <span>지금 할 조치</span>
+        <div id="actions" class="row"></div>
+        <button class="act emact" type="button" data-em="1">긴급 차단</button>
+        <button id="backBtn" class="back">감시 화면으로</button>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===================== 침입 기록 ===================== -->
+  <div id="view-history" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">침입 기록</div><h1>지금까지 들어온 침입</h1></div>
+      <div class="row" role="group" aria-label="기간">
+        <button class="chip" data-days="1">오늘</button>
+        <button class="chip on" data-days="7">최근 7일</button>
+        <button class="chip" data-days="30">최근 30일</button>
+        <label class="toggle"><input type="checkbox" id="histSim" checked> 시뮬레이션 포함</label>
+      </div>
+    </div>
+    <section class="card">
+      <div class="top"><h2>침입 사건</h2><span class="cap" id="incCount"></span></div>
+      <div id="incGrid" class="incgrid"></div>
+    </section>
+    <section class="card">
+      <div class="top"><h2>탐지 알림 전체</h2>
+        <div class="row" role="group" aria-label="심각도">
+          <button class="chip on" data-sev="ALL">전체</button><button class="chip" data-sev="HIGH">HIGH</button>
+          <button class="chip" data-sev="MEDIUM">MEDIUM</button><button class="chip" data-sev="LOW">LOW</button>
+        </div>
+      </div>
+      <div class="tbl"><table>
+        <thead><tr><th>시각</th><th>심각도</th><th>규칙</th><th>내용</th><th>공격 분류</th></tr></thead>
+        <tbody id="alertRows"></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <!-- ===================== AI 도구 탐지 ===================== -->
+  <div id="view-ai" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">AI 도구 탐지</div><h1>지금 이 PC의 AI 프로그램</h1></div>
+      <span class="cap">3초마다 다시 확인</span>
+    </div>
+    <section class="stats" id="aiStats"></section>
+    <section class="card">
+      <div class="top"><h2>실행 중</h2><span class="cap">이 PC 안의 활동이라 외부 침입은 아니에요 · 모르는 프로그램만 확인하세요</span></div>
+      <div class="tbl"><table>
+        <thead><tr><th>위험</th><th>프로그램</th><th>종류</th><th>PID</th><th>시작</th><th>접속 중인 AI 서버</th><th></th></tr></thead>
+        <tbody id="aiRows"></tbody>
+      </table></div>
+    </section>
+    <div class="split">
+      <section class="card" style="flex:1 1 320px;min-width:0">
+        <div class="top"><h2>허용 목록</h2><span class="cap">여기 있는 프로그램은 경보 대신 기록만</span></div>
+        <div id="whiteList" class="row"></div>
+        <form id="whiteForm" class="inline">
+          <label for="whiteName" class="cap">프로그램 이름</label>
+          <input id="whiteName" placeholder="예: cursor.exe" autocomplete="off">
+          <button class="btn" type="submit">추가</button>
+        </form>
+      </section>
+      <section class="card" style="flex:2 1 420px;min-width:0">
+        <div class="top"><h2>최근 AI 관련 기록</h2><span class="cap">24시간</span></div>
+        <div id="aiRecent"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===================== 위협 IP 목록 ===================== -->
+  <div id="view-ips" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">위협 IP 목록</div><h1>외부 IP 조사</h1></div>
+    </div>
+    <section class="card">
+      <form id="checkForm" class="inline" style="margin-top:0">
+        <label for="checkIp" style="font-weight:700">조사할 IP</label>
+        <input id="checkIp" placeholder="예: 101.53.80.20" autocomplete="off" inputmode="decimal" style="font-family:var(--mono);font-size:16px">
+        <button class="btn dark" type="submit">조사</button>
+      </form>
+      <span class="cap" style="margin-top:8px">ARTEX 공격 IP 여부 · 지금 연결 · 탐지 기록 · 로그인 시도 · 차단 여부를 한 번에 확인해요. CMD 에서는 <span class="mono">check_ip.bat</span></span>
+      <div id="checkOut"></div>
+    </section>
+    <section class="stats" id="ipStats"></section>
+    <section class="card">
+      <div class="top"><h2>주소 목록</h2><span class="cap" id="iocSource"></span></div>
+      <div class="gintro" style="margin-bottom:12px">감시하는 건 ARTEX IP 만이 아니에요. 위험 포트로 들어온 외부 IP · 시스템 도구(powershell 등)가 접속한 외부 IP · 해킹 도구 포트 · 이 PC 가 다른 PC 들을 스캔하는 것 · 처음 보는 외부 IP 를 '이상한 IP' 로 따로 잡아요. 보안팀 위협 목록은 DDS 폴더의 <span class="mono">threat_feeds</span> 에 .txt (한 줄에 IP 또는 CIDR) 로 넣으면 5분 안에 반영돼요.<br>'감시 대상'은 CrowdStrike 가 공개한 ARTEX 공격자 IP 예요. 이 PC에 들어왔다는 뜻이 아니라, 들어오면 바로 잡으려고 지켜보는 목록이에요. 실제로 들어오면 빨간색 '들어옴'으로 바뀌고 실시간 감시 화면에 경보가 떠요.</div>
+      <form id="iocForm" class="inline" style="margin:0 0 12px">
+        <label for="iocIp" class="cap">위협 IP 직접 추가</label>
+        <input id="iocIp" placeholder="예: 203.0.113.9" autocomplete="off" inputmode="decimal">
+        <button class="btn" type="submit">추가</button>
+      </form>
+      <div class="tbl"><table>
+        <thead><tr><th>IP</th><th>분류</th><th>탐지</th><th>관련 규칙</th><th>마지막</th><th></th></tr></thead>
+        <tbody id="ipRows"></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <!-- ===================== 규칙 리포트 ===================== -->
+  <div id="view-rules" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">규칙 리포트</div><h1>탐지 규칙 <span id="ruleCount">-</span>개</h1></div>
+      <span class="cap">공격 분류: AIPFL-IDS (NF-ToN-IoT-V2 · CICIoT2023)</span>
+    </div>
+    <div id="rulesWarn"></div>
+    <div id="rulesBody" style="display:flex;flex-direction:column;gap:22px"></div>
+  </div>
+
+  <!-- ===================== 조치 가이드 ===================== -->
+  <div id="view-guide" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">조치 가이드</div><h1>침입이 잡혔을 때</h1></div>
+      <span class="cap">관리자 권한 명령 프롬프트 / PowerShell 에서 실행</span>
+    </div>
+    <form id="guideIpForm" class="inline" style="margin:0" onsubmit="return false">
+      <label for="guideIp" style="font-weight:700">문제 IP</label>
+      <input id="guideIp" placeholder="넣으면 아래 명령어의 &lt;IP&gt; 가 바뀌어요" autocomplete="off" inputmode="decimal" style="font-family:var(--mono)">
+    </form>
+    <div class="row" id="guideTabs" role="tablist"></div>
+    <div id="guideBody" style="display:flex;flex-direction:column;gap:14px"></div>
+  </div>
+  <!-- ===================== AI 분석관 ===================== -->
+  <div id="view-llm" class="view" hidden>
+    <div class="head">
+      <div><div class="eyebrow">AI 분석관</div><h1>침입 AI 를 AI 로 막기</h1></div>
+      <span class="cap">순서: API → GGUF 1 → GGUF 2 · 안 되면 다음으로 자동 전환</span>
+    </div>
+    <div id="llmProg" class="aiprog wide" role="status" aria-live="polite" hidden></div>
+    <section class="stats" id="llmStats"></section>
+
+    <section class="card">
+      <div class="top"><h2>동작 방식</h2></div>
+      <div class="row" style="gap:16px">
+        <label class="toggle"><input type="checkbox" id="llmAutoAnalyze"> 침입이 잡히면 자동으로 분석</label>
+        <label class="toggle"><input type="checkbox" id="llmAutoApply"> AI 판단 자동 실행</label>
+        <label class="toggle">최소 확신 <input type="number" id="llmMinConf" min="50" max="100" style="width:72px;min-height:36px;padding:0 8px;border-radius:8px;border:1px solid var(--line2)"></label>
+        <button class="btn" data-llmsave="opts">저장</button>
+      </div>
+      <p class="cap" style="margin:10px 0 0;line-height:1.6">'AI 판단 자동 실행' 을 켜면, AI 가 AI 공격·자동화 공격이라고 최소 확신 이상으로 판단할 때 차단·종료를 바로 해요. 대상은 DDS 가 실제로 잡은 IP·프로세스만 (이번 사건 + 최근 24시간 이상한 IP). AI 가 기록에 없는 대상을 말하면 무시해요 — 공격자가 기록에 심은 문장으로 방어 AI 를 속이는 조작을 막으려는 거예요. 내부망·신뢰 IP 는 자동 차단 안 해요.</p>
+    </section>
+
+    <section class="card">
+      <div class="top"><h2>1. API</h2><span class="cap" id="apiState"></span></div>
+      <div class="form">
+        <label>형식<select id="apiFormat"><option value="openai">OpenAI 호환 (OpenAI · vLLM · Ollama · LM Studio · 사내 게이트웨이)</option><option value="anthropic">Anthropic</option></select></label>
+        <label>API 주소<input id="apiUrl" placeholder="예: https://api.openai.com/v1  ·  http://10.0.0.5:8000/v1  ·  http://localhost:11434/v1" autocomplete="off"></label>
+        <label>API 키<input id="apiKey" type="password" placeholder="없으면 비워 두기" autocomplete="off"></label>
+        <label>모델 이름<input id="apiModel" placeholder="예: gpt-4o-mini · qwen2.5-7b-instruct · claude-sonnet-4-5" autocomplete="off"></label>
+        <label>API 응답 대기 (초) — 넘으면 바로 GGUF<input id="apiTimeout" type="number" min="1" max="30"></label>
+        <label class="toggle"><input type="checkbox" id="apiEnabled"> 사용</label>
+      </div>
+      <div class="row" style="margin-top:12px"><button class="btn dark" data-llmsave="api">저장</button><button class="btn" data-llmtest="api">연결 테스트</button></div>
+      <p class="cap" style="margin:10px 0 0">키는 이 PC 의 llm_config.json 에만 저장돼요. 화면에는 가려서 보여요.</p>
+    </section>
+
+    <section class="card">
+      <div class="top"><h2>GGUF 폴더</h2><span class="cap mono" id="ggufDir"></span></div>
+      <div class="gintro"><b>이 폴더의 GGUF 1개는 DDS 가 켜져 있는 동안 항상 실행돼요.</b> (llama-cpp-python 으로 직접 로드 · Ollama 불필요) API 주소나 키가 없거나 API 가 끊기면 이 모델이 바로 분석해요. 이 폴더에 .gguf 파일을 넣기만 하면 10초 안에 인식해요. 슬롯 경로를 비워 두면 <b>작은(빠른) 모델 → 1번(항상 실행 · 즉시 판단)</b>, <b>큰 모델 → 2번(정밀 분석)</b> 으로 자동 배정돼요. 5초 안에 판단하려면 1번은 1.5B~8B 크기(Q4)를 권해요. API 가 끊기면 그 즉시 GGUF 를 메모리에 미리 올려 둬요.</div>
+      <div class="tbl" style="margin-top:12px"><table style="min-width:560px">
+        <thead><tr><th>파일</th><th>크기</th><th>배정</th></tr></thead><tbody id="ggufRows"></tbody></table></div>
+      <div id="llamaWarn"></div>
+    </section>
+
+    <div class="split">
+      <section class="card" style="flex:1 1 420px;min-width:0" id="slot-gguf1"></section>
+      <section class="card" style="flex:1 1 420px;min-width:0" id="slot-gguf2"></section>
+    </div>
+
+    <section class="card">
+      <div class="top"><h2>마지막 분석</h2><button class="btn" data-llmanalyze="1">지금 사건 분석</button></div>
+      <div id="llmLast"></div>
+    </section>
+  </div>
+  </main>
+</div>
+<div id="toast" class="toast" role="status"></div>
+
+<script>
+let TOKEN = null, lastMode = null, VIEW = 'live', AUTO = false;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const WORD = {ok:'정상', warn:'주의', bad:'위험'};
+const SIMTAG = '<span class="sim">시뮬레이션</span>';
+const H = {days: 7, sev: 'ALL', sim: true};
+let HIST = null, GUIDE = 'ai';
+
+function toast(msg, err) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast' + (err ? ' err' : '');
+  t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 4000);
+}
+async function post(path, body) {
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json','X-DDS-Token':TOKEN}, body:JSON.stringify(body||{})});
+  return r.json();
+}
+async function getJ(path) { return (await fetch(path, {cache:'no-store'})).json(); }
+const catChip = (c) => `<span class="cat" title="${esc(c.cic ? 'CICIoT2023: ' + c.cic : 'AIPFL 데이터셋에 없는 DDS 고유 분류')}">${esc(c.ko)}${c.nf ? ` <b>${esc(c.nf)}</b>` : ''}</span>`;
+const empty = (msg, cols) => cols ? `<tr><td colspan="${cols}" class="empty">${esc(msg)}</td></tr>` : `<div class="empty">${esc(msg)}</div>`;
+
+// ================= 실시간 감시 =================
+function render(s) {
+  TOKEN = s.token;
+  const inc = s.incident, alert = !!inc;
+  $('warns').innerHTML = (s.warnings||[]).map(w => `<div class="warnbar">${esc(w)}</div>`).join('');
+  $('lastScan').textContent = s.lastScan || '준비 중';
+  $('localNote').hidden = !s.localActivity;
+  $('localNote').textContent = `이 PC 안의 AI 도구 활동 ${s.localActivity}건 · 외부 침입 아님 → AI 도구 탐지에서 보기`;
+  $('hostText').textContent = `${s.host} · 센서 5개`;
+  const real = alert && inc.level === 'intrusion';
+  $('statusText').textContent = !alert ? '실시간 감시 중' : real ? '침입 대응 중' : '확인 필요';
+  $('statusDot').className = 'dot' + (!alert ? '' : real ? ' bad' : ' warn');
+  $('badge').textContent = alert ? inc.steps.length : s.highToday;
+  $('badge').className = 'badge' + (alert ? ' hot' : '');
+  $('liveDot').hidden = !real || VIEW === 'live';
+  document.title = !alert ? 'DDS 실시간 감시' : real ? '⚠ 침입 감지 — DDS' : '확인 필요 — DDS';
+
+  $('sensors').innerHTML = s.sensors.map(x =>
+    `<div class="sensor ${x.state}"><div class="n"><span class="dot ${x.state}"></span>${esc(x.name)}</div>
+     <span class="s">${WORD[x.state]}</span><span class="h">${esc(x.hint)}</span></div>`).join('');
+
+  AUTO = !!s.auto;
+  $('autoSw').setAttribute('aria-checked', AUTO); $('autoSw').classList.toggle('on', AUTO);
+  $('autoSwText').textContent = AUTO ? '자동 대응 켜짐' : '자동 대응 꺼짐';
+  if (alert) {
+    const acts = s.autoActions || [];
+    $('autoState').textContent = AUTO ? '자동 대응 켜짐 — 확실한 침입은 바로 처리' : '자동 대응 꺼짐 — 알림만 보냄';
+    $('autoList').innerHTML = acts.length
+      ? acts.map(x => `<div class="line"><span class="ts">${esc(x.ts)}</span><span class="dot ${x.ok ? '' : 'bad'}"></span><span style="flex:1 1 240px">${esc(x.text)}</span>${x.sim ? SIMTAG : ''}</div>`).join('')
+      : AUTO ? '<div class="line"><span class="cap">자동 처리할 확실한 항목이 아직 없어요</span></div>'
+             : `<div class="line" style="justify-content:space-between"><span class="cap">자동 대응이 꺼져 있어서 차단·종료는 아래 버튼으로 직접 해야 해요</span><button class="btn" data-autoset="1">자동 대응 켜기</button></div>`;
+  }
+  renderEmergency(s);
+  updateProgress(s.llm && s.llm.progress);
+  if (alert) renderLLMCard(s);
+  $('safeHead').hidden = alert; $('safeBody').hidden = alert;
+  $('hero').hidden = !real; $('checkHead').hidden = !(alert && !real); $('alertBody').hidden = !alert;
+  $('view-live').classList.toggle('chk', alert && !real);
+
+  if (!alert) {
+    lastMode = null;
+    $('stream').innerHTML = s.stream.length ? s.stream.map(e =>
+      `<div class="line"><span class="ts">${esc(e.ts)}</span><span class="dot"></span><span style="flex:1 1 200px">${esc(e.text)}</span>${e.sim ? SIMTAG : ''}</div>`).join('')
+      : '<div class="line"><span class="cap">첫 수집을 기다리는 중…</span></div>';
+    const li = s.lastIncident;
+    $('lastTitle').textContent = li ? li.title : '탐지 기록 없음';
+    $('lastSub').textContent = li ? `${li.at} · 탐지 규칙 ${li.count}건${li.sim ? ' · 시뮬레이션' : ''}` : '침입이 감지되면 여기에 남아요';
+  } else {
+    $('tag').textContent = inc.tag; $('title').textContent = inc.title; $('sub').textContent = inc.sub;
+    $('ctag').textContent = inc.tag; $('ctitle').textContent = inc.title; $('csub').textContent = inc.sub;
+    $('facts').innerHTML = inc.facts.map(f =>
+      `<div class="fact"><span class="l">${esc(f.label)}</span><span class="m">${esc(f.main)}</span><span class="s">${esc(f.sub)}</span></div>`).join('');
+    $('steps').innerHTML = inc.steps.map((t, i) =>
+      `<div class="line"><span class="ts">${esc(t.ts)}</span><span class="num ${t.sev==='HIGH'?'':'med'}">${i+1}</span>
+       <span class="rule">${esc(t.rule)}</span><span style="flex:1 1 240px">${esc(t.text)}</span>${catChip(t.cat)}</div>`).join('');
+    const j = inc.judge;
+    if (j) {
+      $('jVerdict').textContent = j.verdict; $('jVerdict').className = 'jverdict ' + j.level;
+      $('jBar').style.width = j.autoScore + '%'; $('jScore').textContent = j.autoScore;
+      const li = (x) => `<li class="${x.ok ? 'y' : 'n'}"><span aria-hidden="true">${x.ok ? '✓' : '–'}</span>${esc(x.text)}</li>`;
+      $('jSpeed').innerHTML = j.speed.map(li).join(''); $('jAI').innerHTML = j.ai.map(li).join('');
+    }
+    $('chain').hidden = !inc.chain.length;
+    $('chain').innerHTML = `<span class="cap">공격 단계 (AIPFL-IDS · NF-ToN-IoT-V2 분류)</span><span class="steps">${
+      inc.chain.map(c => `<b>${esc(c)}</b>`).join('<span class="arr">→</span>')}</span>`;
+    if (lastMode !== inc.mode + inc.lastId) {
+      $('actions').innerHTML = inc.actions.map((a, i) =>
+        `<button class="act${i===0?' first':''}" data-act="${esc(a.id)}" data-mode="${esc(inc.mode)}">${esc(a.label)}</button>`).join('');
+    }
+    lastMode = inc.mode + inc.lastId;
+  }
+}
+async function tick() {
+  try { render(await getJ('/api/state')); }
+  catch (e) { $('statusText').textContent = '에이전트 연결 끊김'; $('statusDot').className = 'dot warn'; }
+}
+
+// ================= 침입 기록 =================
+async function loadHistory() {
+  HIST = await getJ(`/api/history?days=${H.days}&sim=${H.sim ? 1 : 0}`);
+  const incs = HIST.incidents.filter(i => {
+    if (!i.ts) return true;
+    return (Date.now() - new Date(i.ts).getTime()) / 864e5 <= H.days;
+  });
+  $('incCount').textContent = `${incs.length}건 · '감시 화면으로'를 누른 사건이 여기 남아요`;
+  $('incGrid').innerHTML = incs.length ? incs.map(i => {
+    const who = (i.facts || []).find(f => f.label === '누가');
+    return `<article class="inc">
+      <div class="pic"><img src="/alert.jpg" alt=""><span class="tagchip ${i.level==='check'?'chk':i.mode==='hacker'?'hk':''}">${i.level==='check'?'확인 필요':i.mode==='hacker'?'해커 침입':'AI 해킹 도구'}</span>${i.sim ? SIMTAG : ''}</div>
+      <div class="body">
+        <span class="t">${esc(i.title)}</span>
+        <span class="cap">${esc(i.ts.replace('T',' ').slice(0,16))} · 규칙 ${i.steps.length}건</span>
+        ${who && who.main !== '-' ? `<span class="mono">${esc(who.main)}</span>` : ''}
+        ${i.chain.length ? `<span class="chainmini">${i.chain.map(esc).join(' → ')}</span>` : ''}
+        ${i.judge ? `<span class="jverdict small ${esc(i.judge.level)}">${esc(i.judge.verdict)}</span>` : ''}
+      </div>
+      <details><summary>공격 흐름 보기</summary>
+        ${i.steps.map(s => `<div class="stepl"><span class="mono">${esc(s.ts)}</span><span>${esc(s.text)}</span></div>`).join('')}
+      </details>
+    </article>`;}).join('') : empty('아직 기록된 침입 사건이 없어요');
+  renderAlertRows();
+}
+function renderAlertRows() {
+  if (!HIST) return;
+  const rows = HIST.alerts.filter(a => H.sev === 'ALL' || a.sev === H.sev);
+  $('alertRows').innerHTML = rows.length ? rows.map(a =>
+    `<tr><td class="mono nowrap">${esc(a.ts.slice(5,19))}</td><td><span class="sev ${esc(a.sev)}">${esc(a.sev)}</span></td>
+     <td class="mono">${esc(a.rule)}</td><td>${esc(a.text)} ${a.sim ? SIMTAG : ''}</td><td>${catChip(a.cat)}</td></tr>`).join('')
+    : empty('해당하는 알림이 없어요', 5);
+}
+
+// ================= AI 도구 탐지 =================
+async function loadAI() {
+  const d = await getJ('/api/ai');
+  const hi = d.procs.filter(p => p.risk === 'high').length;
+  $('aiBadge').hidden = !hi; $('aiBadge').textContent = hi; $('aiBadge').className = 'badge amber';
+  const k = (t) => d.procs.filter(p => p.kind === t).length;
+  $('aiStats').innerHTML = [
+    ['미등록 프로그램의 AI 접속', hi, hi > 0 && 'warn'],
+    ['자동조종 브라우저', k('자동조종 브라우저'), k('자동조종 브라우저') > 0 && 'warn'],
+    ['AI 스크립트', k('AI 스크립트'), false],
+    ['등록된 AI 앱', k('등록된 AI 앱'), false],
+    ['감시 중인 AI 서버', d.domainList.length, false]
+  ].map(([l, v, hot]) => `<div class="stat ${hot ? 'warn' : ''}"><span class="cap">${esc(l)}</span><b>${v}</b></div>`).join('');
+  const RL = {high:'확인 필요', med:'주의', low:'정상'};
+  $('aiRows').innerHTML = d.procs.length ? d.procs.map(p =>
+    `<tr><td><span class="risk ${p.risk}"><span class="dot ${p.risk==='low'?'':'warn'}"></span>${RL[p.risk]}</span></td>
+     <td><span class="mono" title="${esc(p.cmd)}">${esc(p.name)}</span>${p.white ? ' <span class="cat">허용</span>' : ''}</td>
+     <td>${esc(p.kind)}</td><td class="mono">${p.pid}</td><td class="mono nowrap">${esc(p.started)}</td>
+     <td>${p.domains.map(x => `<span class="domain">${esc(x)}</span>`).join('') || '<span class="cap">-</span>'}</td>
+     <td>${p.white ? `<button class="mini ghost" data-white="${esc(p.name)}" data-op="remove">허용 해제</button>`
+                    : `<button class="mini" data-white="${esc(p.name)}" data-op="add">허용 목록에 추가</button>`}</td></tr>`).join('')
+    : empty('지금 실행 중인 AI 프로그램이 없어요', 7);
+  $('whiteList').innerHTML = d.whitelist.length ? d.whitelist.map(w =>
+    `<span class="wchip">${esc(w)}<button data-white="${esc(w)}" data-op="remove" aria-label="${esc(w)} 허용 해제">×</button></span>`).join('')
+    : '<span class="cap">비어 있어요</span>';
+  $('aiRecent').innerHTML = d.recent.length ? d.recent.map(a =>
+    `<div class="line"><span class="ts" style="width:120px">${esc(a.ts.slice(5,19))}</span><span class="sev ${esc(a.sev)}">${esc(a.sev)}</span>
+     <span style="flex:1 1 220px">${esc(a.text)}</span>${a.sim ? SIMTAG : ''}</div>`).join('') : empty('24시간 동안 기록이 없어요');
+}
+
+const RULEKO = {threat_feed_match:'위협 목록 IP', lolbin_outbound:'시스템 도구 외부 접속', outbound_scan:'이 PC가 스캔',
+  risky_port_inbound:'위험 포트 유입', odd_port_outbound:'해킹 도구 포트', new_inbound_ip:'처음 보는 외부 IP',
+  ioc_ip_match:'ARTEX IP', port_scan:'포트 스캔', brute_force:'비밀번호 대입', remote_rdp_logon:'외부 RDP 로그인',
+  remote_network_logon:'외부 로그인', ai_api_connection:'AI 서버 접속', ai_web_usage:'AI 사이트'};
+// ================= 위협 IP 목록 =================
+async function loadIPs() {
+  const d = await getJ('/api/ips');
+  const n = (f) => d.ips.filter(f).length;
+  $('ipStats').innerHTML = [
+    ['감시 중인 ARTEX 공개 IP', n(r => r.ioc), false],
+    ['그중 실제로 들어온 IP', n(r => r.ioc && r.intr > 0), n(r => r.ioc && r.intr > 0) > 0],
+    ['외부 침입 흔적이 있는 IP', n(r => r.intr > 0), n(r => r.intr > 0) > 0],
+    ['이상한 IP (확인 필요)', n(r => !r.intr && r.susp.length), false],
+    ['위협 목록 파일 항목', d.feeds || 0, false],
+    ['방화벽 차단 중', n(r => r.blocked), false],
+    ['감시 포트', (d.ports || []).join(', ') || '-', false]
+  ].map(([l, v, hot]) => `<div class="stat ${hot ? 'hot' : ''}"><span class="cap">${esc(l)}</span><b>${esc(v)}</b></div>`).join('');
+  $('iocSource').textContent = d.source ? `IOC 출처: ${d.source}` : '';
+  $('ipRows').innerHTML = d.ips.length ? d.ips.map(r => {
+    const hit = r.intr > 0;   // 외부 침입 규칙으로 잡힌 경우만 빨강
+    const flags = [r.ioc && (hit ? '<span class="flag ioc">ARTEX 공격 IP · 들어옴</span>' : '<span class="flag watch">감시 대상 (ARTEX 공개 IP)</span>'), r.blocked && '<span class="flag blk">차단됨</span>',
+                   hit && !r.ioc && '<span class="flag ioc">외부 침입 흔적</span>',
+                   !hit && r.susp.length && '<span class="flag seen">이상한 IP</span>',
+                   !hit && !r.susp.length && r.real && !r.ioc && '<span class="flag watch">이 PC의 프로그램이 접속한 주소</span>', r.private && '<span class="flag lan">내부·예약 주소</span>'].filter(Boolean).join('');
+    const cnt = hit ? `<b style="color:var(--red2)">침입 ${r.intr}건</b>`
+              : r.real ? `<span class="cap">기록 ${r.real}건 · 침입 아님</span>`
+              : `<span class="ok">들어온 적 없음</span>${r.sim ? ` <span class="cap">(시뮬 ${r.sim})</span>` : ''}`;
+    return `<tr><td class="mono">${esc(r.ip)}</td><td>${flags}</td><td class="nowrap">${cnt}</td>
+      <td>${r.rules.map(x => `<span class="domain" title="${esc(x)}">${esc(RULEKO[x] || x)}</span>`).join('') || '<span class="cap">-</span>'}</td>
+      <td class="mono nowrap">${esc((r.last || '').slice(5,16)) || '-'}</td>
+      <td class="nowrap"><button class="mini" data-check="${esc(r.ip)}">조사</button> ${r.blocked ? `<button class="mini" data-unblock="${esc(r.ip)}">차단 해제</button>`
+                                      : `<button class="mini ${hit ? 'red' : ''}" data-block="${esc(r.ip)}">${hit ? '차단' : '미리 차단'}</button>`}
+        ${r.ioc ? `<button class="mini ghost" data-iocdel="${esc(r.ip)}">목록에서 빼기</button>` : ''}</td></tr>`;
+  }).join('') : empty('목록이 비어 있어요', 6);
+}
+
+async function checkIP(ip) {
+  $('checkIp').value = ip;
+  $('checkOut').innerHTML = '<div class="empty">조사 중…</div>';
+  const r = await getJ('/api/ipcheck?ip=' + encodeURIComponent(ip));
+  if (!r.ok) { $('checkOut').innerHTML = `<div class="warnbar" style="margin-top:12px">${esc(r.msg)}</div>`; return; }
+  const LV = {high:['bad','위험'], med:['warn','주의'], low:['','정상'], none:['','기록 없음']}[r.level];
+  const a = r.alerts, lg = r.logons;
+  $('checkOut').innerHTML = `
+  <div class="ipres ${r.level}">
+    <div class="ipv"><span class="mono" style="font-size:22px">${esc(r.ip)}</span>
+      <span class="cap">${esc(r.kind)}${r.rdns ? ' · ' + esc(r.rdns) : ''}</span>
+      <span class="verdict ${r.level}">${esc(r.verdict)}</span></div>
+    ${r.reasons.length ? `<ul class="reasons">${r.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <div class="stats" style="margin-top:14px">
+      <div class="stat ${r.ioc ? 'hot' : ''}"><span class="cap">ARTEX 공격 IP</span><b>${r.ioc ? '예' : '아니오'}</b></div>
+      <div class="stat ${r.now.length && r.level==='high' ? 'hot' : ''}"><span class="cap">지금 연결</span><b>${r.now.length}</b></div>
+      <div class="stat ${a.real && r.level==='high' ? 'hot' : ''}"><span class="cap">탐지 기록</span><b>${a.real}</b></div>
+      <div class="stat ${lg.fail >= 5 || (lg.success && r.level==='high') ? 'hot' : ''}"><span class="cap">로그인 성공 / 실패</span><b>${lg.success} / ${lg.fail}</b></div>
+      <div class="stat"><span class="cap">차단</span><b>${r.blocked ? '차단됨' : '안 됨'}</b></div>
+    </div>
+    ${r.now.length ? `<h3 class="h3">지금 연결</h3>${r.now.map(c => `<div class="line"><span class="cat">${esc(c.direction)}</span><span class="mono">${esc(c.process || '?')} (PID ${c.pid})</span><span class="mono cap">${esc(c.local)} ↔ :${c.remote_port}</span><span class="cap">${esc(c.state)}</span></div>`).join('')}` : ''}
+    ${a.real ? `<h3 class="h3">탐지 기록 <span class="cap">${esc(a.first)} ~ ${esc(a.last)}</span></h3>${a.recent.map(x => `<div class="line"><span class="ts" style="width:130px">${esc(x.ts.slice(5,19))}</span><span class="sev ${esc(x.sev)}">${esc(x.sev)}</span><span class="rule">${esc(x.rule)}</span><span>${esc(x.who || '')}</span></div>`).join('')}` : ''}
+    ${lg.users.length ? `<h3 class="h3">로그인 시도한 계정</h3><div class="row">${lg.users.map(u => `<span class="domain">${esc(u)}</span>`).join('')}</div>` : ''}
+    ${r.processes.length ? `<h3 class="h3">이 IP와 통신한 프로그램</h3><div class="row">${r.processes.map(p => `<span class="domain">${esc(p.process)} × ${p.count}</span>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:16px">
+      ${r.blocked ? `<button class="btn" data-unblock="${esc(r.ip)}">차단 해제</button>` : `<button class="btn dark" data-block="${esc(r.ip)}" style="background:var(--red);border-color:var(--red)">이 IP 차단</button>`}
+      ${r.ioc ? '' : `<button class="btn" data-iocadd="${esc(r.ip)}">위협 IP 목록에 추가</button>`}
+    </div>
+    <h3 class="h3">CMD 명령어 (이 IP 로 채워짐)</h3>
+    ${r.commands.map(c => `<div class="cap" style="margin-top:10px">${esc(c.label)}</div><div class="code" style="margin-top:4px"><code>${esc(c.cmd)}</code><button data-copy="${esc(c.cmd)}">복사</button></div>`).join('')}
+  </div>`;
+}
+
+// ================= 규칙 리포트 =================
+async function loadRules() {
+  const d = await getJ('/api/rules');
+  $('ruleCount').textContent = d.rules.length;
+  $('rulesWarn').innerHTML = d.logon ? '' : '<div class="warnbar">로그인 감시가 꺼져 있어요 (관리자 권한 + pywin32 필요). "누가 침입했나" 규칙은 지금 실제로 동작하지 않아요.</div>';
+  const groups = [...new Set(d.rules.map(r => r.group))];
+  $('rulesBody').innerHTML = groups.map(g => {
+    const rs = d.rules.filter(r => r.group === g);
+    return `<section class="card"><div class="top"><h2>${esc(g)}</h2><span class="cap">규칙 ${rs.length}개 · 발동 횟수는 시뮬레이션 제외</span></div>
+      <div class="tbl"><table><thead><tr><th>규칙</th><th>언제 발동하나</th><th>심각도</th><th>공격 분류</th><th>오늘</th><th>7일</th><th>마지막</th></tr></thead><tbody>
+      ${rs.map(r => `<tr><td class="mono">${esc(r.rule)}</td><td>${esc(r.desc)}</td>
+        <td>${r.sev.split('/').map(s => `<span class="sev ${esc(s)}">${esc(s)}</span>`).join(' ')}</td><td>${catChip(r.cat)}</td>
+        <td class="mono">${r.today || '<span class="cap">0</span>'}</td>
+        <td class="mono nowrap">${r.real7}${r.sim7 ? ` <span class="cap">(+시뮬 ${r.sim7})</span>` : ''}</td>
+        <td class="mono nowrap">${esc((r.last || '').slice(5,16)) || '<span class="cap">-</span>'}</td></tr>`).join('')}
+      </tbody></table></div></section>`;
+  }).join('');
+}
+
+// ================= 조치 가이드 =================
+const GUIDES = {
+  ai: {name: 'AI 해킹 도구 (ARTEX 계열)', intro: '스캔 → 웹쉘 → 정찰 명령 → 공격 서버 통신 순서로 잡힌 경우. 사람이 아니라 자동 도구라서 몇 분 안에 끝까지 진행돼요. 차단이 먼저예요.', steps: [
+    ['공격 IP 차단', '실시간 감시 화면의 "IP 차단" 버튼, 또는 아래 명령. 위협 IP 목록에서도 할 수 있어요.', 'netsh advfirewall firewall add rule name="DDS_BLOCK_<IP>_in" dir=in action=block remoteip=<IP>'],
+    ['웹쉘 프로세스 종료', '"프로세스 종료" 버튼은 서버가 띄운 cmd/powershell 만 끝내요. 웹 서버 자체는 건드리지 않아요.', 'taskkill /PID <PID> /T /F'],
+    ['웹 폴더에서 최근 바뀐 파일 찾기', '웹쉘 파일(.aspx .jsp .php)이 새로 생겼는지 확인해요. 경로는 웹 서버 루트로 바꾸세요.', 'Get-ChildItem C:\\inetpub\\wwwroot -Recurse -Include *.aspx,*.ashx,*.jsp,*.php | Where-Object LastWriteTime -gt (Get-Date).AddDays(-2) | Select FullName, LastWriteTime'],
+    ['증거 저장', '"증거 저장" 버튼 → evidence 폴더에 사건 기록과 최근 이벤트 200건이 JSON 으로 남아요. 지우기 전에 먼저 저장하세요.', null],
+    ['보안 담당자 보고 · 비밀번호 변경', '웹 서버 계정과 DB 계정 비밀번호를 바꾸고, 같은 IP가 다른 PC에도 왔는지 확인을 요청하세요.', null]]},
+  hacker: {name: '해커 원격 침입', intro: '비밀번호 대입 → 원격 로그인 → 계정 생성 → 관리자 권한 순서로 잡힌 경우. 접속을 끊고 만든 계정을 막는 게 먼저예요.', steps: [
+    ['접속 중인 세션 확인 · 끊기', '목록에서 모르는 세션의 ID를 확인해 끊어요.', 'query user\nlogoff <세션ID>'],
+    ['출발지 IP 차단', '실시간 감시 화면의 "IP 차단" 버튼, 또는 위협 IP 목록에서 차단.', null],
+    ['새로 만든 계정 잠그기', '침입 기록의 "무엇이" 칸에 나온 계정 이름을 넣으세요.', 'net user <계정> /active:no'],
+    ['관리자 그룹 정리', '모르는 계정이 관리자 그룹에 있으면 빼요.', 'net localgroup administrators\nnet localgroup administrators <계정> /delete'],
+    ['원격 데스크톱 끄기 · 비밀번호 변경', '쓰지 않으면 원격 데스크톱을 꺼 두세요. 공격받은 계정 비밀번호는 바로 바꾸세요.', 'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 1 /f']]},
+  unknown: {name: '모르는 프로그램이 AI 서버에 접속', intro: '목록에 없는 프로그램이 LLM API(OpenAI, Anthropic, DeepSeek 등)에 접속한 경우. 정상 프로그램일 수도 있어서, 먼저 정체를 확인해요.', steps: [
+    ['파일 위치 확인', 'AI 도구 탐지 화면의 PID 를 넣어요. Temp, AppData, Downloads 같은 곳이면 의심해요.', 'Get-Process -Id <PID> | Select-Object Name, Path, StartTime'],
+    ['서명 확인', '서명이 없거나(NotSigned) 모르는 회사면 의심해요.', 'Get-AuthenticodeSignature "<파일 경로>" | Select Status, SignerCertificate'],
+    ['누가 띄웠는지 확인', '부모 프로세스와 실행 명령줄을 봐요.', 'Get-CimInstance Win32_Process -Filter "ProcessId=<PID>" | Select CommandLine, ParentProcessId'],
+    ['모르는 거면 종료 · 아는 거면 허용', '모르는 프로그램이면 증거 저장 후 종료. 쓰는 프로그램이면 AI 도구 탐지 화면에서 "허용 목록에 추가".', 'taskkill /PID <PID> /T /F']]},
+  browser: {name: '브라우저 자동조종', intro: '브라우저가 --remote-debugging-port, --headless 같은 원격 조종 옵션으로 실행된 경우. AI 에이전트가 브라우저로 로그인된 사이트를 대신 조작할 수 있어요.', steps: [
+    ['누가 브라우저를 띄웠는지 확인', '부모 프로세스가 python, node 등이면 자동화 스크립트예요.', 'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Where CommandLine -match "remote-debugging|headless" | Select ProcessId, ParentProcessId, CommandLine'],
+    ['디버깅 포트 열려 있는지 확인', '9222 같은 포트가 LISTEN 이면 외부에서 브라우저를 조종할 수 있는 상태예요.', 'netstat -ano | findstr LISTENING | findstr 9222'],
+    ['내가 쓰는 자동화가 아니면 종료', '종료 후 그 브라우저로 로그인했던 사이트 비밀번호를 바꾸는 걸 권해요.', 'taskkill /PID <PID> /T /F']]},
+  fp: {name: '오탐일 때', intro: '내가 한 일인데 경보가 뜬 경우. 경보를 끄고 다음에 안 뜨게 설정해요.', steps: [
+    ['경보 끄기', '실시간 감시 화면에서 "감시 화면으로" → 침입 기록에 남고 화면은 안전 상태로 돌아가요.', null],
+    ['자주 쓰는 AI 프로그램', 'AI 도구 탐지 화면에서 "허용 목록에 추가" → 다음부터 기록만 남아요.', null],
+    ['내 다른 PC에서 원격 접속', 'config.json 의 trusted_ips 에 그 PC 의 IP를 넣고 DDS를 다시 시작해요.', '"trusted_ips": ["127.0.0.1", "::1", "<내 PC IP>"]'],
+    ['야근이 잦으면', 'config.json 의 work_hours 를 바꿔요.', '"work_hours": {"start": 7, "end": 23}']]}
+};
+function renderGuide() {
+  $('guideTabs').innerHTML = Object.entries(GUIDES).map(([k, g]) =>
+    `<button class="gtab ${k===GUIDE?'on':''}" role="tab" aria-selected="${k===GUIDE}" data-guide="${k}">${esc(g.name)}</button>`).join('');
+  const g = GUIDES[GUIDE];
+  const gip = ($('guideIp').value || '').trim();
+  const fill = (c) => gip ? c.split('<IP>').join(gip) : c;
+  $('guideBody').innerHTML = `<div class="gintro">${esc(g.intro)}</div>` + g.steps.map(([t, p, c], i) =>
+    `<div class="gstep"><span class="no">${i+1}</span><div style="flex:1;min-width:0"><h3>${esc(t)}</h3><p>${esc(p)}</p>
+     ${c ? `<div class="code"><code>${esc(fill(c))}</code><button data-copy="${esc(fill(c))}">복사</button></div>` : ''}</div></div>`).join('');
+}
+
+// ================= AI 분석관 =================
+const VERD = {ai_attack:['ai','AI 공격'], automated:['auto','자동화 공격'], human:['human','사람 공격'], false_positive:['fp','오탐'], unknown:['fp','판단 불가']};
+const ACT_KO = {block_ip:'IP 차단', kill_process:'프로세스 종료', isolate:'긴급 격리', lock_account:'계정 잠금', logoff:'세션 끊기', evidence:'증거 저장', none:'조치 없음'};
+const BK_KO = {api:'API', gguf1:'GGUF 1', gguf2:'GGUF 2'};
+let LLMST = null;
+
+function analysisHTML(r, withButtons) {
+  if (!r) return '<div class="empty">아직 분석 기록이 없어요</div>';
+  if (!r.ok) return `<div class="warnbar">${esc(r.msg || '분석 실패')}</div>` + triedHTML(r.tried);
+  const x = r.result;
+  const head = `<div class="cap" style="margin-bottom:10px">${esc(r.at || '')} · ${esc(BK_KO[r.backend] || r.backend)}${r.model ? ' · ' + esc(r.model) : ''} · ${r.seconds}초${r.auto ? ' · 자동 분석' : ''}${r.sim ? ' · 시뮬레이션' : ''}</div>`;
+  if (!x) return head + `<div class="warnbar">응답을 JSON 으로 해석하지 못했어요. 원문:</div><pre class="raw">${esc(r.raw || '')}</pre>` + triedHTML(r.tried);
+  const v = VERD[x.verdict] || VERD.unknown;
+  return head + `
+    <div class="jhead"><span class="jverdict ${v[0]}">${esc(x.verdict_ko || v[1])}</span>
+      <div class="jbar"><span class="cap">AI 확신</span><div class="bar"><i style="width:${x.confidence}%"></i></div><b class="mono">${x.confidence}</b></div></div>
+    ${x.summary ? `<p style="margin:14px 0 0;line-height:1.7">${esc(x.summary)}</p>` : ''}
+    <div class="split" style="margin-top:12px">
+      <div style="flex:1 1 300px;min-width:0"><h3 class="h3">판단 근거</h3><ul class="jlist">${(x.reasons || []).map(t => `<li class="y"><span>✓</span>${esc(t)}</li>`).join('') || '<li class="n"><span>–</span>없음</li>'}</ul></div>
+      <div style="flex:1 1 300px;min-width:0"><h3 class="h3">공격자가 다음에 할 행동</h3><ul class="jlist">${(x.next_moves || []).map(t => `<li class="n"><span>→</span>${esc(t)}</li>`).join('') || '<li class="n"><span>–</span>없음</li>'}</ul></div>
+    </div>
+    ${(x.actions || []).length ? `<h3 class="h3">AI 추천 조치 ${withButtons ? '<span class="cap">— 눌러야 실행돼요</span>' : ''}</h3>
+      ${(x.actions || []).map(a => `<div class="line"><span class="cat"><b style="margin:0">${esc(ACT_KO[a.id] || a.id)}</b></span><span class="mono">${esc(a.target || '')}</span><span style="flex:1 1 220px" class="cap">${esc(a.why || '')}</span>
+        ${withButtons && a.id !== 'none' ? `<button class="mini red" data-llmapply="${esc(a.id)}" data-target="${esc(a.target || '')}">실행</button>` : ''}</div>`).join('')}` : ''}
+    ${triedHTML(r.tried)}`;
+}
+function triedHTML(tried) {
+  if (!tried || !tried.length) return '';
+  return `<div class="cap" style="margin-top:12px">건너뛴 연결: ${tried.map(t => `${esc(BK_KO[t.backend] || t.backend)} (${esc(t.error)})`).join(' · ')}</div>`;
+}
+function renderLLMCard(s) {
+  const L = s.llm;
+  if (!L) { $('llmCard').hidden = true; return; }
+  $('llmCard').hidden = false;
+  const anyModel = (L.api && L.api.configured) || Object.values(L.slots || {}).some(Boolean) || L.hasModel;
+  const up = !anyModel ? 'AI 분석관 꺼짐 (모델 없음)' : L.api && L.api.configured ? (L.api.up ? 'API 연결됨' : 'API 끊김 → GGUF') : 'API 없음 → GGUF';
+  const g = Object.entries(L.slots || {}).filter(([k, v]) => v).map(([k]) => BK_KO[k]).join(', ');
+  $('llmCardState').textContent = `${up}${g ? ' · ' + g + ' 대기 중' : ''}`;
+  const key = JSON.stringify([L.busy, L.last && L.last.at]);
+  if ($('llmCardBody').dataset.key === key) return;
+  $('llmCardBody').dataset.key = key;
+  $('llmCardBody').innerHTML = L.busy ? `<div class="empty">${esc(progLine((L.progress || {}).analysis) || 'AI 분석관 실행 중…')}</div>`
+    : L.last ? analysisHTML(L.last, true)
+    : (!(L.api && L.api.configured) && !Object.values(L.slots || {}).some(Boolean) && !L.hasModel)
+      ? '<div class="empty">AI 분석관 꺼짐 (모델 없음) — 탐지·차단·자동 대응은 정상 동작 중이에요. GGUF 폴더에 모델을 넣거나 API 를 넣으면 켜져요.</div>'
+      : '<div class="empty">아직 분석 전이에요 — 자동 분석이 꺼져 있으면 "AI 분석관에게 묻기" 를 누르세요</div>';
+}
+
+async function loadLLM(full = true) {
+  const st = LLMST = await getJ('/api/llm');
+  const c = st.cfg, api = st.api || {};
+  const slotSt = (k) => st.slots[k].loaded ? '로드됨' : st.slots[k].loading ? '로드 중' : st.resolved[k].path ? '대기' : '파일 없음';
+  $('llmStats').innerHTML = [
+    ['지금 실행 중인 GGUF', st.running || (st.ggufFiles.length ? '로드 중…' : '폴더 비어 있음'), !st.running && 'warn'],
+    ['API', !c.api.url ? '없음 → GGUF 사용' : (api.error && !api.configured) ? api.error + ' → GGUF 사용' : api.up === false ? '끊김 → GGUF 사용' : api.up ? '연결됨' : '확인 중', api.up === false && 'warn'],
+    ['GGUF 1 (빠른 판단)', slotSt('gguf1'), false], ['GGUF 2 (정밀)', slotSt('gguf2'), false],
+    ['GGUF 폴더 파일', st.ggufFiles.length + '개', false],
+    ['llama-cpp', st.llamaCpp ? '설치됨' : '없음', !st.llamaCpp && st.ggufFiles.length && 'warn']
+  ].map(([l, v, w]) => `<div class="stat ${w ? 'warn' : ''}"><span class="cap">${esc(l)}</span><b style="font-size:26px">${esc(v)}</b></div>`).join('');
+  if (full) {
+    $('llmAutoAnalyze').checked = !!c.auto_analyze; $('llmAutoApply').checked = !!c.auto_apply; $('llmMinConf').value = c.auto_apply_min_conf;
+    $('apiFormat').value = c.api.format; $('apiUrl').value = c.api.url; $('apiKey').value = c.api.key; $('apiModel').value = c.api.model;
+    $('apiTimeout').value = c.api.timeout; $('apiEnabled').checked = c.api.enabled !== false;
+    ['gguf1', 'gguf2'].forEach(k => renderSlot(k, st));
+  }
+  $('apiState').textContent = !c.api.url ? '주소를 넣으면 5초마다 연결을 확인해요' : api.up ? `연결됨 · ${api.checked} 확인` : api.up === false ? `끊김 (${api.error || ''}) · GGUF 로 자동 전환` : '확인 중';
+  $('ggufDir').textContent = st.ggufDir;
+  const assigned = {}; ['gguf1', 'gguf2'].forEach(k => { if (st.resolved[k].path) assigned[st.resolved[k].path] = BK_KO[k] + (st.resolved[k].auto ? ' (자동)' : ''); });
+  $('ggufRows').innerHTML = st.ggufFiles.length ? st.ggufFiles.map(f => `<tr><td class="mono">${esc(f.name)}</td><td class="mono">${f.gb} GB</td><td>${assigned[f.path] ? `<span class="flag seen">${esc(assigned[f.path])}</span>` : '<span class="cap">-</span>'}</td></tr>`).join('')
+    : `<tr><td colspan="3" class="empty">폴더가 비어 있어요 — .gguf 파일을 넣으세요</td></tr>`;
+  $('llamaWarn').innerHTML = st.llamaCpp ? '' : `<div class="warnbar" style="margin-top:12px">GGUF 를 쓰려면 llama-cpp-python 이 필요해요. 관리자 CMD 에서:<div class="code" style="margin-top:8px"><code>python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu</code><button data-copy="python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu">복사</button></div></div>`;
+  $('llmLast').innerHTML = analysisHTML(st.lastAnalysis, false);
+}
+function renderSlot(k, st) {
+  const c = st.cfg[k], s = st.slots[k], r = st.resolved[k];
+  const opts = st.ggufFiles.map(f => `<option value="${esc(f.path)}" ${c.path === f.path ? 'selected' : ''}>${esc(f.name)} (${f.gb} GB)</option>`).join('');
+  $('slot-' + k).innerHTML = `
+    <div class="top"><h2>${k === 'gguf1' ? '2. GGUF 1 (빠른 판단 · 항상 실행)' : '3. GGUF 2 (정밀 · 1번 실패 시)'}</h2>
+      <span class="flag ${s.loaded ? 'seen' : 'watch'}">${s.loaded ? '로드됨 · ' + esc(s.loadedAt || '') : s.loading ? '로드 중…' : '메모리에 없음'}</span></div>
+    <div class="form">
+      <label>모델 파일<select id="${k}-pick"><option value="" ${!c.path ? 'selected' : ''}>폴더에서 자동 배정${r.auto && r.path ? ' → ' + esc(r.path.split(/[\\/]/).pop()) : ''}</option>${opts}</select></label>
+      <label>직접 경로 (다른 폴더 파일일 때)<input id="${k}-path" value="${esc(c.path && !st.ggufFiles.some(f => f.path === c.path) ? c.path : '')}" placeholder="예: D:\\models\\qwen2.5-7b-instruct-q4_k_m.gguf" autocomplete="off"></label>
+      <label>문맥 길이 (n_ctx)<input id="${k}-ctx" type="number" value="${c.n_ctx}"></label>
+      <label>GPU 레이어 (0 = CPU 만 · -1 = 전부 GPU, 가장 빠름)<input id="${k}-gpu" type="number" value="${c.n_gpu_layers}"></label>
+      <label>CPU 스레드 (0 = 자동)<input id="${k}-thr" type="number" value="${c.n_threads}"></label>
+      <label class="toggle"><input type="checkbox" id="${k}-auto" ${c.autoload ? 'checked' : ''}> DDS 시작할 때 바로 로드</label>
+      <label class="toggle"><input type="checkbox" id="${k}-en" ${c.enabled !== false ? 'checked' : ''}> 사용</label>
+    </div>
+    ${s.error ? `<div class="warnbar" style="margin-top:10px">${esc(s.error)}</div>` : ''}
+    <div class="row" style="margin-top:12px">
+      <button class="btn dark" data-llmsave="${k}">저장</button>
+      <button class="btn" data-llmload="${k}">${s.loaded ? '다시 로드' : '지금 로드'}</button>
+      ${s.loaded ? `<button class="btn" data-llmunload="${k}">메모리에서 내리기</button>` : ''}
+      <button class="btn" data-llmtest="${k}">테스트</button>
+    </div>`;
+}
+function llmBody(part) {
+  if (part === 'opts') return {auto_analyze: $('llmAutoAnalyze').checked, auto_apply: $('llmAutoApply').checked, auto_apply_min_conf: +$('llmMinConf').value || 80};
+  if (part === 'api') return {api: {format: $('apiFormat').value, url: $('apiUrl').value.trim(), key: $('apiKey').value, model: $('apiModel').value.trim(), timeout: +$('apiTimeout').value || 5, enabled: $('apiEnabled').checked}};
+  const k = part, direct = $(k + '-path').value.trim();
+  return {[k]: {path: direct || $(k + '-pick').value, n_ctx: +$(k + '-ctx').value || 4096, n_gpu_layers: +$(k + '-gpu').value || 0,
+                n_threads: +$(k + '-thr').value || 0, autoload: $(k + '-auto').checked, enabled: $(k + '-en').checked}};
+}
+
+// ================= 실행 중 / 끝 표시 =================
+const SEEN = {};
+let PROG_HIDE = {};
+function progLine(p) {
+  if (!p || p.state === 'idle') return '';
+  const passed = (p.steps || []).map(x => `${x.label} 안 됨`).join(' → ');
+  if (p.state === 'running')
+    return `⏳ ${p.task}${p.label ? ' — ' + p.label + ' 실행 중' : ' 실행 중'}… ${p.elapsed ?? 0}초${passed ? ' (' + passed + ')' : ''}`;
+  if (p.state === 'done') return `✓ ${p.task} 끝났어요 — ${p.msg} · ${p.seconds}초`;
+  return `✕ ${p.task} 실패 — ${p.msg}`;
+}
+function updateProgress(P) {
+  if (!P) return;
+  const lines = [];
+  for (const kind of ['load', 'analysis']) {
+    const p = P[kind];
+    if (!p) continue;
+    if (SEEN[kind] === undefined) SEEN[kind] = p.seq || 0;          // 처음 열었을 땐 지난 결과로 알림 안 띄움
+    else if ((p.seq || 0) !== SEEN[kind] && p.state !== 'running') {
+      SEEN[kind] = p.seq;
+      toast(progLine(p), p.state === 'failed');
+      PROG_HIDE[kind] = Date.now() + 12000;                         // '끝' 은 12초 동안 보여줌
+    }
+    if (p.state === 'running' || (PROG_HIDE[kind] && Date.now() < PROG_HIDE[kind]))
+      lines.push(`<div class="pl ${p.state}">${esc(progLine(p))}</div>`);
+  }
+  const html = lines.join('');
+  for (const id of ['aiProg', 'llmProg']) { const el = $(id); if (!el) continue; el.hidden = !html; el.innerHTML = html; }
+  $('llmDot').hidden = !(P.analysis && P.analysis.state === 'running' || P.load && P.load.state === 'running');
+  $('llmDot').textContent = '실행 중';
+}
+
+// ================= 긴급 버튼 =================
+function renderEmergency(s) {
+  const e = s.emergency || {};
+  $('emBanner').hidden = !e.on;
+  if (e.on) $('emText').textContent = `긴급 격리 중 · ${e.at || ''} 부터 — ${(e.done || []).join(' · ')}`;
+  $('emBtn').textContent = e.on ? '긴급 차단 중' : '긴급 차단';
+  $('emBtn').classList.toggle('on', !!e.on);
+  $('emBtn').disabled = !!e.on;
+  $('emRelease').disabled = !e.on;
+  $('safeTitle').textContent = e.on ? '긴급 차단 중이에요' : '지금은 안전해요';
+  $('emRelease').classList.toggle('live', !!e.on);
+  document.querySelectorAll('[data-em]').forEach(b => { b.textContent = e.on ? '긴급 차단 해제' : '긴급 차단'; b.dataset.em = e.on ? '0' : '1'; });
+  EMERG = !!e.on;
+}
+let EMERG = false;
+async function emergency(on) {
+  if (on && !confirm('긴급 차단할까요?\n\n· 들어오는 연결 전부 차단 (허용 규칙 무시)\n· 나가는 연결 차단 → 인터넷·사내망 끊김\n· 진행 중 사건의 공격 프로세스 종료\n· 증거 저장\n\n대시보드(이 화면)는 계속 써요. API 가 끊기니 AI 분석관은 GGUF 로 전환돼요.')) return;
+  if (!on && !confirm('긴급 차단을 해제할까요?\n방화벽을 긴급 차단 직전 상태로 되돌려요.\n(화면이 안 열릴 땐 DDS 폴더의 emergency_release.bat)')) return;
+  const r = await post('/api/emergency', {on}); toast(r.msg, !r.ok); tick();
+}
+
+// ================= 화면 전환 =================
+const LOADERS = {history: loadHistory, ai: loadAI, ips: loadIPs, rules: loadRules, guide: async () => renderGuide(), llm: () => loadLLM(true)};
+function route() {
+  let h = (location.hash || '#live').slice(1);
+  if (h.startsWith('guide-')) { GUIDE = h.slice(6); h = 'guide'; }
+  if (!$('view-' + h)) h = 'live';
+  VIEW = h;
+  document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== 'view-' + h);
+  document.querySelectorAll('.menu a').forEach(a => a.classList.toggle('on', a.dataset.view === h));
+  if (LOADERS[h]) LOADERS[h]().catch(e => toast('불러오기 실패: ' + e.message, true));
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', route);
+setInterval(() => { if (VIEW === 'ai' || VIEW === 'ips') LOADERS[VIEW]().catch(() => {}); if (VIEW === 'llm') loadLLM(false).catch(() => {}); }, 3000);
+setInterval(() => { if (VIEW === 'history' || VIEW === 'rules') LOADERS[VIEW]().catch(() => {}); }, 10000);
+
+document.addEventListener('click', async (ev) => {
+  const t = ev.target;
+  const sim = t.closest('[data-sim]'), act = t.closest('[data-act]');
+  if (sim) { const r = await post('/api/simulate', {type: sim.dataset.sim}); toast(r.msg, !r.ok); tick(); }
+  if (act) {
+    const id = act.dataset.act;
+    if (['isolate', 'logoff', 'lock_account'].includes(id)) { location.hash = act.dataset.mode === 'hacker' ? '#guide-hacker' : '#guide-ai'; return; }
+    const r = await post('/api/action', {action: id}); toast(r.msg, !r.ok);
+  }
+  if (t.id === 'backBtn') { await post('/api/ack'); lastMode = null; tick(); }
+  if (t.closest('#autoSw') || t.closest('[data-autoset]')) {
+    const want = t.closest('[data-autoset]') ? true : !AUTO;
+    if (want && !confirm('자동 대응을 켤까요?\n외부 침입(ARTEX IP·포트 스캔·비밀번호 대입·외부 RDP)의 출발지 IP를 방화벽으로 바로 차단하고, 웹 서버가 띄운 쉘을 바로 종료해요.\n내부망·신뢰 IP는 자동 차단하지 않아요.')) return;
+    const r = await post('/api/auto', {enabled: want}); toast(r.msg, !r.ok); tick();
+  }
+  if (t.id === 'emBtn') { if (!EMERG) emergency(true); return; }
+  if (t.id === 'emRelease') { emergency(false); return; }
+  if (t.id === 'emOff') { emergency(false); return; }
+  if (t.closest('[data-em]')) { emergency(t.closest('[data-em]').dataset.em === '1'); return; }
+  const ls = t.closest('[data-llmsave]');
+  if (ls) { const r = await post('/api/llm/config', llmBody(ls.dataset.llmsave)); toast(r.msg, !r.ok); loadLLM(true); }
+  const lt = t.closest('[data-llmtest]');
+  if (lt) { toast(`${BK_KO[lt.dataset.llmtest]} 실행 중… (테스트)`); setTimeout(tick, 300); const r = await post('/api/llm/test', {backend: lt.dataset.llmtest}); toast(r.msg, !r.ok); loadLLM(false); }
+  const ll = t.closest('[data-llmload]');
+  if (ll) { toast(`${BK_KO[ll.dataset.llmload]} 로드 실행 중… (큰 모델은 수십 초)`); setTimeout(tick, 300); await post('/api/llm/config', llmBody(ll.dataset.llmload)); const r = await post('/api/llm/load', {slot: ll.dataset.llmload}); toast(r.msg, !r.ok); loadLLM(true); }
+  const lu = t.closest('[data-llmunload]');
+  if (lu) { const r = await post('/api/llm/unload', {slot: lu.dataset.llmunload}); toast(r.msg, !r.ok); loadLLM(true); }
+  const la = t.closest('[data-llmanalyze]');
+  if (la) { toast('AI 분석 실행 중…'); setTimeout(tick, 300); $('llmCardBody') && ($('llmCardBody').dataset.key = ''); const r = await post('/api/llm/analyze', {}); toast(r.msg, !r.ok); tick(); if (VIEW === 'llm') loadLLM(false); }
+  const lap = t.closest('[data-llmapply]');
+  if (lap) { if (!confirm(`AI 추천 조치를 실행할까요?\n${ACT_KO[lap.dataset.llmapply] || lap.dataset.llmapply} ${lap.dataset.target}`)) return;
+             const r = await post('/api/llm/apply', {id: lap.dataset.llmapply, target: lap.dataset.target}); toast(r.msg, !r.ok); tick(); }
+  const days = t.closest('[data-days]');
+  if (days) { H.days = +days.dataset.days; document.querySelectorAll('[data-days]').forEach(b => b.classList.toggle('on', b === days)); loadHistory(); }
+  const sev = t.closest('[data-sev]');
+  if (sev) { H.sev = sev.dataset.sev; document.querySelectorAll('[data-sev]').forEach(b => b.classList.toggle('on', b === sev)); renderAlertRows(); }
+  const w = t.closest('[data-white]');
+  if (w) { const r = await post('/api/whitelist', {name: w.dataset.white, op: w.dataset.op}); toast(r.msg, !r.ok); loadAI(); }
+  const b = t.closest('[data-block]');
+  if (b) { const r = await post('/api/block', {ip: b.dataset.block}); toast(r.msg, !r.ok); loadIPs(); if ($('checkIp').value === b.dataset.block) checkIP(b.dataset.block); }
+  const u = t.closest('[data-unblock]');
+  if (u) { const r = await post('/api/unblock', {ip: u.dataset.unblock}); toast(r.msg, !r.ok); loadIPs(); }
+  const del = t.closest('[data-iocdel]');
+  if (del) { const r = await post('/api/ioc', {ip: del.dataset.iocdel, op: 'remove'}); toast(r.msg, !r.ok); loadIPs(); }
+  const ck = t.closest('[data-check]');
+  if (ck) { checkIP(ck.dataset.check); window.scrollTo({top: 0, behavior: 'smooth'}); }
+  const ia = t.closest('[data-iocadd]');
+  if (ia) { const r = await post('/api/ioc', {ip: ia.dataset.iocadd, op: 'add'}); toast(r.msg, !r.ok); loadIPs(); checkIP(ia.dataset.iocadd); }
+  const g = t.closest('[data-guide]');
+  if (g) { GUIDE = g.dataset.guide; renderGuide(); }
+  const cp = t.closest('[data-copy]');
+  if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copy); toast('복사했어요'); } catch (e) { toast('복사 실패 — 직접 선택해서 복사하세요', true); } }
+});
+$('histSim').addEventListener('change', (e) => { H.sim = e.target.checked; loadHistory(); });
+$('whiteForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); const v = $('whiteName').value.trim(); if (!v) return;
+  const r = await post('/api/whitelist', {name: v, op: 'add'}); toast(r.msg, !r.ok); if (r.ok) $('whiteName').value = ''; loadAI();
+});
+$('checkForm').addEventListener('submit', (e) => { e.preventDefault(); const v = $('checkIp').value.trim(); if (v) checkIP(v); });
+$('guideIp').addEventListener('input', renderGuide);
+$('iocForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); const v = $('iocIp').value.trim(); if (!v) return;
+  const r = await post('/api/ioc', {ip: v, op: 'add'}); toast(r.msg, !r.ok); if (r.ok) $('iocIp').value = ''; loadIPs();
+});
+
+tick().then(route); setInterval(tick, 1000);
+</script>
+</body>
+</html>

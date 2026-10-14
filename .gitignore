@@ -1,0 +1,27 @@
+# ── 실행 중 생기는 기록 (실제 PC 의 프로세스·접속·로그인 정보가 들어 있음 — 절대 올리지 말 것) ──
+dds.db
+dds.db-*
+evidence/
+data/
+
+# ── API 키가 들어 있는 설정 ──
+llm_config.json
+
+# ── 모델 · 학습 결과 (수 GB) ──
+*.gguf
+ml/models/
+
+# ── 개인 위협 목록 (예시 파일만 올림) ──
+threat_feeds/*
+!threat_feeds/example_feed.txt
+
+# ── 참고용 사본 · 원본 대용량 파일 ──
+reference/
+*.zip
+StayThere.html
+
+# ── Python ──
+__pycache__/
+*.pyc
+.venv/
+venv/
