@@ -49,7 +49,8 @@ def main():
     llm.start_manager(mon)
     st = llm.status()
     print(f"AI 분석관: API {'설정됨' if st['cfg']['api']['url'] else '미설정'} · "
-          f"GGUF 폴더 {len(st['ggufFiles'])}개 ({st['ggufDir']}) · llama-cpp {'있음' if st['llamaCpp'] else '없음'}")
+          f"GGUF 폴더 {len(st['ggufFiles'])}개 ({st['ggufDir']}) · llama-cpp {'있음' if st['llamaCpp'] else '없음'}"
+          + (f" · {'GPU 사용 가능' if st['gpu'] else 'CPU 빌드 → GGUF 실행 안 함 (GPU 24GB 이상 필요)'}" if st['llamaCpp'] else ""))
     mon.start()
 
     srv = webui.serve(mon, args.port)

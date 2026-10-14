@@ -4,6 +4,22 @@
 
 ![AI 분석관 설정](images/08_ai_analyst.png)
 
+## GGUF 는 GPU 전용 — NVIDIA VRAM 24GB 이상, CPU 지원 안 함
+
+- GGUF 모델은 **GPU 에서만** 실행합니다. llama-cpp-python 이 CPU 빌드면 GGUF 를 띄우지 않고, 화면과 콘솔에 「CPU 빌드 → GGUF 안 됨」 을 표시합니다.
+- 기본으로 모든 레이어를 GPU 에 올립니다(`n_gpu_layers = -1`). VRAM 이 모자라면 40 → 20 레이어로 줄여 다시 시도하고, **CPU 로는 내려가지 않습니다.**
+- 권장: **VRAM 24GB 이상** (예: 27B Q4_K_M 모델 ≈ 16.8GB + 문맥 메모리)
+- llama-cpp-python CUDA 빌드 설치 (둘 중 하나):
+  ```bat
+  :: 미리 빌드된 CUDA 휠 (CUDA 12.4 예시 — 설치된 CUDA 버전에 맞게 cu121·cu122·cu123·cu124 중 선택)
+  python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+  :: 직접 빌드 (CUDA Toolkit · Visual Studio 빌드 도구 필요)
+  set CMAKE_ARGS=-DGGML_CUDA=on
+  python -m pip install llama-cpp-python --no-cache-dir --force-reinstall
+  ```
+- 대시보드 「AI 분석관」 의 **GPU** 칸이 「사용 가능」 이면 CUDA 빌드가 맞습니다.
+
 ## 모델이 없어도 DDS 는 돌아갑니다
 
 AI 분석관은 **2차 의견**입니다. 탐지 · 「AI 공격 프로그램인가?」 판별(기계 속도 + AI 직접 증거) · 자동 대응 · 긴급 차단은 LLM 없이 동작합니다. API 도 GGUF 도 없으면 화면에 「AI 분석관 꺼짐 (모델 없음) — 탐지·차단은 정상 동작 중」 이 뜹니다.
@@ -14,7 +30,7 @@ AI 분석관은 **2차 의견**입니다. 탐지 · 「AI 공격 프로그램인
 |---|---|---|
 | 1 | **API** | 주소 + 키 + 모델명. `openai` 형식(OpenAI · vLLM · Ollama `/v1` · LM Studio · LocalAI · 사내 게이트웨이) 또는 `anthropic` 형식 |
 | 2 | **GGUF 1** (빠른 판단 · 항상 실행) | `GGUF` 폴더에서 가장 작은 모델이 자동 배정. DDS 시작과 동시에 로드 |
-| 3 | **GGUF 2** (정밀 · 1번 실패 시) | 가장 큰 모델이 자동 배정. 1번이 실패하면 1번을 내리고 2번으로 교체 (메모리 때문에 GGUF 는 항상 1개만 실행) |
+| 3 | **GGUF 2** (정밀 · 1번 실패 시) | 가장 큰 모델이 자동 배정. 1번이 실패하면 1번을 내리고 2번으로 교체 (VRAM 때문에 GGUF 는 항상 1개만 실행) |
 
 - 대시보드 「AI 분석관」 메뉴에서 슬롯마다 파일을 직접 고르거나, 다른 폴더 경로를 넣을 수 있습니다.
 - **API 를 건너뛰고 바로 GGUF** 를 쓰는 경우: 주소가 없을 때 · 외부 주소인데 키가 없을 때 (localhost 의 Ollama·LM Studio 는 키 없어도 됨) · 5초마다 하는 연결 확인에서 끊겨 있을 때
@@ -30,7 +46,7 @@ AI 분석관은 **2차 의견**입니다. 탐지 · 「AI 공격 프로그램인
 4. GGUF 에는 짧은 지시문과 사건 요약본을 보내고, 문맥 길이(`n_ctx`)를 넘으면 데이터를 잘라 맞춥니다.
 5. 모델을 올릴 때 지시문을 한 번 미리 읽혀 둡니다(접두어 캐시). 실제 사건 때는 사건 내용만 읽으면 됩니다.
 
-> 5초를 지키려면 GGUF 1번은 **1.5B~8B · Q4** 정도를 권합니다. 27B 이상은 CPU 만으로는 사건을 읽는 데만 수십 초가 걸릴 수 있습니다. NVIDIA GPU 가 있고 llama-cpp-python 이 CUDA 빌드라면 「GPU 레이어」 를 `-1` 로 두세요.
+> GGUF 는 GPU 전용입니다 (VRAM 24GB 이상). 모델이 커서 5초 안에 답이 다 나오지 않으면 잘린 답에서 판정·확신만 살려서 보여 줍니다.
 
 ## 진행 상황 표시
 
@@ -80,7 +96,7 @@ LLM 에게는 아래 JSON 하나만 내도록 요구합니다.
 | `api.timeout` | 5 | API 응답 대기(초) |
 | `gguf1.autoload` | true | DDS 시작 때 바로 로드 |
 | `gguf1.n_ctx` / `gguf2.n_ctx` | 8192 / 4096 | 문맥 길이 |
-| `gguf*.n_gpu_layers` | 0 | GPU 로 올릴 레이어 수 (-1 = 전부) |
+| `gguf*.n_gpu_layers` | -1 | GPU 로 올릴 레이어 수 (-1 = 전부). 0(CPU)은 지원하지 않아 -1 로 처리 |
 | `gguf_dir` | gguf | 모델 폴더 (`gguf`/`GGUF` 둘 다 인식) |
 | `time_limit_sec` | 5 | 분석 전체 시간 제한 |
 | `gguf_max_tokens` / `max_tokens` | 256 / 400 | 답 길이 (GGUF / API) |

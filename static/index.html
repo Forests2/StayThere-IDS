@@ -469,7 +469,7 @@ td.nowrap{white-space:nowrap}
 
     <section class="card">
       <div class="top"><h2>GGUF 폴더</h2><span class="cap mono" id="ggufDir"></span></div>
-      <div class="gintro"><b>이 폴더의 GGUF 1개는 DDS 가 켜져 있는 동안 항상 실행돼요.</b> (llama-cpp-python 으로 직접 로드 · Ollama 불필요) API 주소나 키가 없거나 API 가 끊기면 이 모델이 바로 분석해요. 이 폴더에 .gguf 파일을 넣기만 하면 10초 안에 인식해요. 슬롯 경로를 비워 두면 <b>작은(빠른) 모델 → 1번(항상 실행 · 즉시 판단)</b>, <b>큰 모델 → 2번(정밀 분석)</b> 으로 자동 배정돼요. 5초 안에 판단하려면 1번은 1.5B~8B 크기(Q4)를 권해요. API 가 끊기면 그 즉시 GGUF 를 메모리에 미리 올려 둬요.</div>
+      <div class="gintro"><b>이 폴더의 GGUF 1개는 DDS 가 켜져 있는 동안 항상 실행돼요.</b> (llama-cpp-python 으로 직접 로드 · Ollama 불필요 · <b>GPU 전용: NVIDIA VRAM 24GB 이상, CPU 실행은 지원하지 않아요</b>) API 주소나 키가 없거나 API 가 끊기면 이 모델이 바로 분석해요. 이 폴더에 .gguf 파일을 넣기만 하면 10초 안에 인식해요. 슬롯 경로를 비워 두면 <b>작은(빠른) 모델 → 1번(항상 실행 · 즉시 판단)</b>, <b>큰 모델 → 2번(정밀 분석)</b> 으로 자동 배정돼요. 5초 안에 판단하려면 1번은 1.5B~8B 크기(Q4)를 권해요. API 가 끊기면 그 즉시 GGUF 를 메모리에 미리 올려 둬요.</div>
       <div class="tbl" style="margin-top:12px"><table style="min-width:560px">
         <thead><tr><th>파일</th><th>크기</th><th>배정</th></tr></thead><tbody id="ggufRows"></tbody></table></div>
       <div id="llamaWarn"></div>
@@ -836,7 +836,8 @@ async function loadLLM(full = true) {
     ['API', !c.api.url ? '없음 → GGUF 사용' : (api.error && !api.configured) ? api.error + ' → GGUF 사용' : api.up === false ? '끊김 → GGUF 사용' : api.up ? '연결됨' : '확인 중', api.up === false && 'warn'],
     ['GGUF 1 (빠른 판단)', slotSt('gguf1'), false], ['GGUF 2 (정밀)', slotSt('gguf2'), false],
     ['GGUF 폴더 파일', st.ggufFiles.length + '개', false],
-    ['llama-cpp', st.llamaCpp ? '설치됨' : '없음', !st.llamaCpp && st.ggufFiles.length && 'warn']
+    ['llama-cpp', st.llamaCpp ? '설치됨' : '없음', !st.llamaCpp && st.ggufFiles.length && 'warn'],
+    ['GPU (VRAM 24GB 이상 필요)', !st.llamaCpp ? '-' : st.gpu ? '사용 가능' : 'CPU 빌드 → GGUF 안 됨', st.llamaCpp && !st.gpu && 'warn']
   ].map(([l, v, w]) => `<div class="stat ${w ? 'warn' : ''}"><span class="cap">${esc(l)}</span><b style="font-size:26px">${esc(v)}</b></div>`).join('');
   if (full) {
     $('llmAutoAnalyze').checked = !!c.auto_analyze; $('llmAutoApply').checked = !!c.auto_apply; $('llmMinConf').value = c.auto_apply_min_conf;
@@ -849,7 +850,7 @@ async function loadLLM(full = true) {
   const assigned = {}; ['gguf1', 'gguf2'].forEach(k => { if (st.resolved[k].path) assigned[st.resolved[k].path] = BK_KO[k] + (st.resolved[k].auto ? ' (자동)' : ''); });
   $('ggufRows').innerHTML = st.ggufFiles.length ? st.ggufFiles.map(f => `<tr><td class="mono">${esc(f.name)}</td><td class="mono">${f.gb} GB</td><td>${assigned[f.path] ? `<span class="flag seen">${esc(assigned[f.path])}</span>` : '<span class="cap">-</span>'}</td></tr>`).join('')
     : `<tr><td colspan="3" class="empty">폴더가 비어 있어요 — .gguf 파일을 넣으세요</td></tr>`;
-  $('llamaWarn').innerHTML = st.llamaCpp ? '' : `<div class="warnbar" style="margin-top:12px">GGUF 를 쓰려면 llama-cpp-python 이 필요해요. 관리자 CMD 에서:<div class="code" style="margin-top:8px"><code>python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu</code><button data-copy="python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu">복사</button></div></div>`;
+  $('llamaWarn').innerHTML = (st.llamaCpp && st.gpu) ? '' : `<div class="warnbar" style="margin-top:12px">GGUF 는 GPU 전용이에요 (NVIDIA GPU · VRAM 24GB 이상). ${st.llamaCpp ? '지금 llama-cpp-python 이 CPU 빌드라 GGUF 를 실행하지 않아요.' : 'llama-cpp-python 이 없어요.'} CUDA 빌드로 설치하세요 — 방법은 docs/AI_ANALYST.md. 탐지·차단은 GPU 없이도 정상 동작해요.</div>`;
   $('llmLast').innerHTML = analysisHTML(st.lastAnalysis, false);
 }
 function renderSlot(k, st) {
@@ -857,12 +858,12 @@ function renderSlot(k, st) {
   const opts = st.ggufFiles.map(f => `<option value="${esc(f.path)}" ${c.path === f.path ? 'selected' : ''}>${esc(f.name)} (${f.gb} GB)</option>`).join('');
   $('slot-' + k).innerHTML = `
     <div class="top"><h2>${k === 'gguf1' ? '2. GGUF 1 (빠른 판단 · 항상 실행)' : '3. GGUF 2 (정밀 · 1번 실패 시)'}</h2>
-      <span class="flag ${s.loaded ? 'seen' : 'watch'}">${s.loaded ? '로드됨 · ' + esc(s.loadedAt || '') : s.loading ? '로드 중…' : '메모리에 없음'}</span></div>
+      <span class="flag ${s.loaded ? 'seen' : 'watch'}">${s.loaded ? '로드됨 · ' + esc(s.loadedAt || '') + (s.gpuLayers === -1 ? ' · GPU 전부' : ' · GPU ' + s.gpuLayers + '레이어') : s.loading ? '로드 중…' : '메모리에 없음'}</span></div>
     <div class="form">
       <label>모델 파일<select id="${k}-pick"><option value="" ${!c.path ? 'selected' : ''}>폴더에서 자동 배정${r.auto && r.path ? ' → ' + esc(r.path.split(/[\\/]/).pop()) : ''}</option>${opts}</select></label>
       <label>직접 경로 (다른 폴더 파일일 때)<input id="${k}-path" value="${esc(c.path && !st.ggufFiles.some(f => f.path === c.path) ? c.path : '')}" placeholder="예: D:\\models\\qwen2.5-7b-instruct-q4_k_m.gguf" autocomplete="off"></label>
       <label>문맥 길이 (n_ctx)<input id="${k}-ctx" type="number" value="${c.n_ctx}"></label>
-      <label>GPU 레이어 (0 = CPU 만 · -1 = 전부 GPU, 가장 빠름)<input id="${k}-gpu" type="number" value="${c.n_gpu_layers}"></label>
+      <label>GPU 레이어 (-1 = 전부 GPU · 기본 · VRAM 모자라면 40 → 20 으로 줄여 재시도 · CPU 실행은 지원 안 함)<input id="${k}-gpu" type="number" value="${c.n_gpu_layers}"></label>
       <label>CPU 스레드 (0 = 자동)<input id="${k}-thr" type="number" value="${c.n_threads}"></label>
       <label class="toggle"><input type="checkbox" id="${k}-auto" ${c.autoload ? 'checked' : ''}> DDS 시작할 때 바로 로드</label>
       <label class="toggle"><input type="checkbox" id="${k}-en" ${c.enabled !== false ? 'checked' : ''}> 사용</label>
@@ -879,7 +880,7 @@ function llmBody(part) {
   if (part === 'opts') return {auto_analyze: $('llmAutoAnalyze').checked, auto_apply: $('llmAutoApply').checked, auto_apply_min_conf: +$('llmMinConf').value || 80};
   if (part === 'api') return {api: {format: $('apiFormat').value, url: $('apiUrl').value.trim(), key: $('apiKey').value, model: $('apiModel').value.trim(), timeout: +$('apiTimeout').value || 5, enabled: $('apiEnabled').checked}};
   const k = part, direct = $(k + '-path').value.trim();
-  return {[k]: {path: direct || $(k + '-pick').value, n_ctx: +$(k + '-ctx').value || 4096, n_gpu_layers: +$(k + '-gpu').value || 0,
+  return {[k]: {path: direct || $(k + '-pick').value, n_ctx: +$(k + '-ctx').value || 4096, n_gpu_layers: $(k + '-gpu').value === '' ? -1 : +$(k + '-gpu').value,
                 n_threads: +$(k + '-thr').value || 0, autoload: $(k + '-auto').checked, enabled: $(k + '-en').checked}};
 }
 

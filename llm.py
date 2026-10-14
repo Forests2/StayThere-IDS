@@ -1,5 +1,8 @@
 r"""AI 분석관: 침입 사건을 LLM 에게 보여 주고 'AI 공격인지 · 왜 · 뭘 해야 하는지' 판단을 받음
 
+GGUF 는 GPU 전용 — NVIDIA GPU · VRAM 24GB 이상 필요, CPU 실행은 지원하지 않음.
+(탐지 · 차단 · 자동 대응 · 긴급 차단은 GPU·LLM 없이 동작)
+
 연결 방식 3개 (위에서부터 순서대로 시도, 안 되면 다음으로 자동 전환)
   1. API      : 주소 + 키 + 모델명
                 - openai   : OpenAI 호환 (OpenAI, vLLM, Ollama /v1, LM Studio, LocalAI, 사내 게이트웨이 등)
@@ -8,9 +11,7 @@ r"""AI 분석관: 침입 사건을 LLM 에게 보여 주고 'AI 공격인지 · 
   3. GGUF 2   : 두 번째 .gguf (예: 1번이 크면 2번은 작은 비상용)
 
 설정 파일: llm_config.json (API 키가 들어가니 다른 사람과 공유하지 마세요)
-GGUF 쓰려면: python -m pip install llama-cpp-python
-   (Windows 빌드 도구가 없으면 미리 빌드된 버전:
-    python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu)
+GGUF 쓰려면: llama-cpp-python 의 GPU(CUDA) 빌드 필요 (CPU 빌드는 GGUF 를 실행하지 않음)
 
 안전 원칙
   - LLM 은 판단·추천만. 실제 차단은 사람이 버튼으로 승인 (공격자가 기록에 심은 문장으로 방어 AI 를 속일 수 있음)
@@ -31,8 +32,8 @@ CFG_PATH = os.path.join(BASE, "llm_config.json")
 DEFAULT_CFG = {
     "order": ["api", "gguf1", "gguf2"],
     "api": {"enabled": True, "format": "openai", "url": "", "key": "", "model": "", "timeout": 5},
-    "gguf1": {"enabled": True, "path": "", "n_ctx": 8192, "n_threads": 0, "n_gpu_layers": 0, "autoload": True},
-    "gguf2": {"enabled": True, "path": "", "n_ctx": 4096, "n_threads": 0, "n_gpu_layers": 0, "autoload": False},
+    "gguf1": {"enabled": True, "path": "", "n_ctx": 8192, "n_threads": 0, "n_gpu_layers": -1, "autoload": True},
+    "gguf2": {"enabled": True, "path": "", "n_ctx": 4096, "n_threads": 0, "n_gpu_layers": -1, "autoload": False},
     "max_tokens": 400,
     "gguf_max_tokens": 256,
     "time_limit_sec": 5,         # 분석 전체 5초 안: API 5초, GGUF 생성 5초에서 끊음
@@ -215,6 +216,23 @@ def call_api(a, messages, max_tokens, temperature):
     return text, model
 
 
+# ================= GPU 확인 =================
+_GPU = None
+
+
+def gpu_info():
+    """llama-cpp-python 이 GPU(CUDA/Vulkan/Metal) 빌드인지 확인"""
+    global _GPU
+    if _GPU is None:
+        try:
+            import llama_cpp
+            f = getattr(llama_cpp, "llama_supports_gpu_offload", None)
+            _GPU = {"llama": True, "gpu": bool(f()) if f else False}
+        except Exception:
+            _GPU = {"llama": False, "gpu": False}
+    return _GPU
+
+
 # ================= GGUF 폴더 자동 인식 =================
 def gguf_dir(cfg=None):
     cfg = cfg or load_cfg()
@@ -273,11 +291,12 @@ class GGUFSlot:
         self.loading = False
         self.error = None
         self.loaded_at = None
+        self.gpu_layers = None
         self.lock = threading.Lock()
 
     def status(self):
         return {"loaded": self.llm is not None, "loading": self.loading, "path": self.path,
-                "error": self.error, "loadedAt": self.loaded_at}
+                "error": self.error, "loadedAt": self.loaded_at, "gpuLayers": self.gpu_layers}
 
     def load(self, c):
         path = (c.get("path") or "").strip().strip('"')
@@ -290,7 +309,10 @@ class GGUFSlot:
         try:
             from llama_cpp import Llama
         except ImportError:
-            raise RuntimeError("llama-cpp-python 이 설치돼 있지 않아요 → python -m pip install llama-cpp-python")
+            raise RuntimeError("llama-cpp-python 이 설치돼 있지 않아요 → GPU(CUDA) 빌드로 설치하세요 (docs/AI_ANALYST.md)")
+        if not gpu_info()["gpu"]:
+            raise RuntimeError("GGUF 는 GPU 전용이에요 (NVIDIA GPU · VRAM 24GB 이상). 지금 llama-cpp-python 이 CPU 빌드라 "
+                               "실행하지 않아요 → CUDA 빌드로 다시 설치하세요. 탐지·차단은 GPU 없이 정상 동작해요.")
         with self.lock:
             if self.llm is not None and self.path == path:
                 return "이미 로드돼 있어요"
@@ -298,11 +320,26 @@ class GGUFSlot:
             prog_start("load", f"{LABEL[self.name]} 로드 ({os.path.basename(path)})", self.name)
             try:
                 t0 = time.time()
-                kw = {"model_path": path, "n_ctx": int(c.get("n_ctx") or 4096),
-                      "n_gpu_layers": int(c.get("n_gpu_layers") or 0), "verbose": False}
+                kw = {"model_path": path, "n_ctx": int(c.get("n_ctx") or 4096), "verbose": False}
                 if int(c.get("n_threads") or 0) > 0:
                     kw["n_threads"] = int(c["n_threads"])
-                self.llm = Llama(**kw)
+                want = int(c.get("n_gpu_layers") if c.get("n_gpu_layers") is not None else -1)
+                if want == 0:
+                    want = -1          # CPU 실행은 지원하지 않음 (GPU 전용)
+                # VRAM 이 모자라면 GPU 레이어를 줄여서 다시 시도: 전부 → 40 → 20 (CPU 로는 안 내려감)
+                tries = [want, 40, 20]
+                last_err = None
+                for ngl in dict.fromkeys(tries):
+                    try:
+                        self.llm = Llama(n_gpu_layers=ngl, **kw)
+                        self.gpu_layers = ngl
+                        break
+                    except Exception as e:
+                        last_err = e
+                        self.llm = None
+                        print(f"[AI 분석관] {LABEL[self.name]} GPU 레이어 {ngl} 로 로드 실패 → 줄여서 재시도: {str(e)[:80]}")
+                if self.llm is None:
+                    raise RuntimeError(f"GPU 메모리가 모자라 로드 실패 (VRAM 24GB 이상 필요): {str(last_err)[:120]}")
                 self.path = path
                 t1 = time.time()
                 try:      # 지시문을 미리 한 번 읽혀 두면 실제 사건 때는 사건 내용만 읽으면 됨 (접두어 캐시)
@@ -311,7 +348,8 @@ class GGUFSlot:
                 except Exception:
                     pass
                 self.loaded_at = time.strftime("%H:%M:%S")
-                msg = f"로드 완료 ({t1 - t0:.1f}초 + 준비 {time.time() - t1:.1f}초) — {os.path.basename(path)}"
+                gl = "GPU 전부" if self.gpu_layers == -1 else f"GPU {self.gpu_layers}레이어 (VRAM 부족으로 일부만)"
+                msg = f"로드 완료 ({t1 - t0:.1f}초 + 준비 {time.time() - t1:.1f}초 · {gl}) — {os.path.basename(path)}"
                 prog_end("load", True, f"{LABEL[self.name]} {msg}")
                 return msg
             except Exception as e:
@@ -561,7 +599,7 @@ def status():
     except Exception:
         has_llama, ver = False, ""
     return {"cfg": public_cfg(cfg), "slots": {k: s.status() for k, s in SLOTS.items()},
-            "llamaCpp": has_llama, "llamaCppVersion": ver,
+            "llamaCpp": has_llama, "llamaCppVersion": ver, "gpu": gpu_info()["gpu"],
             "ggufDir": gguf_dir(cfg), "ggufFiles": scan_gguf(cfg), "resolved": resolve_paths(cfg),
             "api": MANAGER.api_state if MANAGER else None,
             "lastAnalysis": MANAGER.last if MANAGER else None,

@@ -1,1 +1,3 @@
+# AI 분석관 GGUF 용 — GPU 전용 (NVIDIA VRAM 24GB 이상, CPU 지원 안 함)
+# CUDA 빌드로 설치하세요: docs/AI_ANALYST.md
 llama-cpp-python
