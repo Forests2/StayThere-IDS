@@ -14,6 +14,7 @@ ml/models/
 # ── 개인 위협 목록 (예시 파일만 올림) ──
 threat_feeds/*
 !threat_feeds/example_feed.txt
+!threat_feeds/artex_ranges_2026-10.txt
 
 # ── 참고용 사본 · 원본 대용량 파일 ──
 reference/

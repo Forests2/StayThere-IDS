@@ -52,7 +52,8 @@
     "xcai.pro",
     "openrouter.ai",
     "api.cohere.ai",
-    "api-inference.huggingface.co"
+    "api-inference.huggingface.co",
+    "api.z.ai"
   ],
   "ai_local_ports": [
     11434,
@@ -80,6 +81,39 @@
   "ioc_domains": [
     "xcai.pro"
   ],
+  "_artex_note": "ARTEX 원본(Autumn-27/ARTEX)·한국어판(artex-ko) 호스트 흔적 — 출처: artex-defense-kit(MIT), IT위키 ARTEX, 2026-10",
+  "artex_process_names": [
+    "artex",
+    "artex.exe",
+    "artex-ko",
+    "artex-ko.exe"
+  ],
+  "artex_host_keywords": [
+    "artex_token",
+    "autumn27/artex",
+    "artex-selfupdate",
+    "artex-ko",
+    "自主渗透测试控制台",
+    "llm 驱动的自主渗透测试系统",
+    "skills/api-recon",
+    "skills\\api-recon",
+    "artex-enrich",
+    "spa-api-recon"
+  ],
+  "artex_user_agents": [
+    "artex-enrich/1.0",
+    "Mozilla/5.0 (spa-api-recon)",
+    "Mozilla/5.0 (spa-api-recon spider)"
+  ],
+  "web_log_dirs": [
+    "C:\\inetpub\\logs\\LogFiles",
+    "C:\\nginx\\logs",
+    "C:\\Apache24\\logs"
+  ],
+  "js_burst": {
+    "distinct_js": 30,
+    "window_sec": 60
+  },
   "web_server_processes": [
     "w3wp.exe",
     "httpd.exe",
@@ -227,6 +261,101 @@
   "outbound_scan": {
     "ips": 15,
     "window_sec": 60
+  },
+  "_agent_note": "AI 에이전트 행동 기준 — Sysdig·CSA(Marimo 사례), ReliaQuest(2026-10-07) 공개 사례의 명령 형식·재시도·권한상승·파일 반입 패턴",
+  "agent_command_markers": [
+    "echo ---",
+    "echo '---'",
+    "echo \"---\"",
+    "echo ===",
+    "echo '==='",
+    "echo \"===\"",
+    "| head -",
+    "|head -",
+    "| select-object -first",
+    "|select-object -first",
+    "| select -first",
+    "|select -first",
+    "2>/dev/null",
+    "2>nul",
+    "2>$null",
+    "-erroraction silentlycontinue",
+    "-ea 0",
+    "echo exit:",
+    "echo $?",
+    "%errorlevel%",
+    "<<eof",
+    "<<'eof'"
+  ],
+  "agent_burst": {
+    "count": 3,
+    "window_sec": 120,
+    "min_markers": 2
+  },
+  "retry_burst": {
+    "count": 3,
+    "window_sec": 120,
+    "similarity": 0.8
+  },
+  "credential_dump_patterns": [
+    "reg save hklm\\sam",
+    "reg save hklm\\system",
+    "reg save hklm\\security",
+    "reg.exe save hklm\\sam",
+    "reg.exe save hklm\\system",
+    "reg.exe save hklm\\security",
+    "comsvcs.dll, minidump",
+    "comsvcs.dll,minidump",
+    "comsvcs.dll minidump",
+    "sekurlsa::",
+    "lsadump::",
+    "ntdsutil",
+    "procdump -ma lsass",
+    "procdump64 -ma lsass",
+    "procdump.exe -ma lsass"
+  ],
+  "privesc_tools": [
+    "printspoofer",
+    "godpotato",
+    "juicypotato",
+    "sweetpotato",
+    "roguepotato",
+    "efspotato",
+    "badpotato"
+  ],
+  "privesc_keywords": [
+    "seimpersonateprivilege",
+    "whoami /priv"
+  ],
+  "staging_patterns": [
+    "certutil -decode",
+    "certutil.exe -decode",
+    "certutil -decodehex",
+    "certutil.exe -decodehex",
+    "certutil -urlcache",
+    "certutil.exe -urlcache",
+    ".b64",
+    "frombase64string"
+  ],
+  "staging_dirs": [
+    "\\users\\public\\",
+    "\\windows\\temp\\",
+    "\\perflogs\\"
+  ],
+  "distributed_ips": {
+    "ips": 3,
+    "window_sec": 120
+  },
+  "_dev_tool_note": "AI 개발 도구 포트 — 127.0.0.1 이 아니라 외부에서 접속 가능하게 열려 있으면 경고, 외부 IP 가 실제로 붙으면 침입",
+  "dev_tool_ports": {
+    "8888": "Jupyter",
+    "11434": "Ollama",
+    "1234": "LM Studio",
+    "7860": "Gradio / text-generation-webui",
+    "8188": "ComfyUI"
+  },
+  "sysmon": {
+    "enabled": true
   },
   "threat_feed_dir": "threat_feeds"
 }

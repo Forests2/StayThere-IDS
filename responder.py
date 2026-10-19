@@ -1,9 +1,10 @@
 """즉각 대응: 외부 침입이 잡히는 순간 알림 + (켜져 있으면) 자동 차단·종료·증거 저장
 
 자동 대응은 확실한 경우만:
-  - IP 차단   : ioc_ip_match / port_scan / brute_force / remote_rdp_logon 의 출발지 IP
-               (내부망 · 루프백 · trusted_ips 는 절대 자동 차단 안 함)
-  - 쉘 종료   : webserver_spawned_shell 로 웹 서버가 띄운 cmd/powershell (웹 서버 자체는 안 건드림)
+  - IP 차단   : BLOCK_RULES(ARTEX IP · 스캔 · 대입 · 외부 RDP · 위협 목록 · ARTEX User-Agent · 분산 IP 등)의 출발지 IP
+               분산 IP 공격은 잡힌 IP 전부 (내부망 · 루프백 · trusted_ips 는 절대 자동 차단 안 함)
+  - 프로세스 종료 : KILL_RULES(웹쉘 · 계정 정보 탈취 · 권한 상승 도구 · 반입한 공격 파일 · ARTEX 실행)
+               해당 프로세스와 그 자식만 (웹 서버 자체는 안 건드림)
   - 증거 저장 : 사건 첫 HIGH 알림 때 한 번
 애매한 것(AI 도구 활동, 이상 시간 로그인 등)은 사람이 판단 — 알림만.
 """
@@ -19,20 +20,21 @@ from datetime import datetime
 
 import psutil
 
-BASE = os.path.dirname(os.path.abspath(__file__))
+from attack_taxonomy import BLOCK_RULES, INTRUSION_RULES, KILL_RULES  # 규칙 묶음은 한 곳에서 관리
 
-INTRUSION_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
-                   "brute_force", "remote_rdp_logon", "remote_network_logon",
-                   "user_created", "added_to_admin_group",
-                   "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound"}
-BLOCK_RULES = {"ioc_ip_match", "port_scan", "brute_force", "remote_rdp_logon", "threat_feed_match", "lolbin_outbound"}
-KILL_RULES = {"webserver_spawned_shell"}
+BASE = os.path.dirname(os.path.abspath(__file__))
 
 RULE_KO = {"port_scan": "포트 스캔", "ioc_ip_match": "ARTEX 공격 IP", "webserver_spawned_shell": "웹쉘",
            "recon_burst": "정찰 명령 연속", "brute_force": "비밀번호 대입", "remote_rdp_logon": "외부 RDP 로그인",
            "remote_network_logon": "외부 네트워크 로그인", "user_created": "계정 생성",
            "added_to_admin_group": "관리자 권한 획득", "threat_feed_match": "위협 목록 IP",
-           "lolbin_outbound": "시스템 도구 외부 접속", "outbound_scan": "이 PC가 다른 PC 스캔"}
+           "lolbin_outbound": "시스템 도구 외부 접속", "outbound_scan": "이 PC가 다른 PC 스캔",
+           "artex_host_artifact": "ARTEX 설치 흔적", "artex_user_agent": "ARTEX 웹 정찰",
+           "js_asset_burst": "웹 자동 정찰", "ioc_domain_query": "공격 중계 도메인 조회",
+           "agent_command_style": "AI 에이전트식 명령", "retry_loop": "실패-수정 반복",
+           "credential_dump": "계정 정보 탈취", "privilege_escalation": "권한 상승",
+           "payload_staging": "공격 파일 반입", "distributed_ips": "IP 바꿔 가며 공격",
+           "dev_tool_inbound": "AI 개발 도구로 외부 접속"}
 
 
 # ================= 방화벽 =================
@@ -201,20 +203,22 @@ class Responder:
                 return
             # 1) IP 차단
             if rule in BLOCK_RULES:
-                ip = d.get("raddr_ip") or d.get("src_ip") or (who if valid_ip(who) else None)
-                if ip in self.handled:
-                    pass
-                elif ip and self._auto_ip(ip):
+                ip1 = d.get("raddr_ip") or d.get("src_ip") or (who if valid_ip(who) else None)
+                targets = list(dict.fromkeys((d.get("ips") or []) + ([ip1] if ip1 else [])))   # 분산 IP 는 묶어서
+                for ip in targets:
+                    if ip in self.handled:
+                        continue
                     self.handled.add(ip)
-                    ok, msg = firewall_block(self.mon, ip, sim, by="자동")
-                    self._log(f"IP 자동 차단 — {msg}", ok, sim, alert_id)
-                elif ip:
-                    self.handled.add(ip)
-                    self._log(f"{ip} 는 내부망·예약·신뢰 주소라서 자동 차단 안 함 — 직접 확인 후 차단하세요", True, sim, alert_id)
+                    if self._auto_ip(ip):
+                        ok, msg = firewall_block(self.mon, ip, sim, by="자동")
+                        self._log(f"IP 자동 차단 — {msg}", ok, sim, alert_id)
+                    else:
+                        self._log(f"{ip} 는 내부망·예약·신뢰 주소라서 자동 차단 안 함 — 직접 확인 후 차단하세요", True, sim, alert_id)
             # 2) 웹쉘 종료
-            if rule in KILL_RULES:
+            if rule in KILL_RULES and d.get("pid") not in self.handled:
+                self.handled.add(d.get("pid"))
                 ok, msg = kill_tree(d.get("pid"), sim)
-                self._log(f"웹쉘 자동 종료 — {msg}", ok, sim, alert_id)
+                self._log(f"{RULE_KO.get(rule, rule)} 프로세스 자동 종료 — {msg}", ok, sim, alert_id)
             # 3) 증거 저장 (사건당 한 번)
             if first:
                 os.makedirs(os.path.join(BASE, "evidence"), exist_ok=True)

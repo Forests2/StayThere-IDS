@@ -1,0 +1,8 @@
+# ARTEX 관련 IP 대역 (2026-10 공개 분석 기반 · 확인용)
+# 출처: windshock "Re-reading the ARTEX Attacks on Korea's Financial Sector" (2026-10-04)
+#       — CrowdStrike 공개 IP 가 속한 ARISK(AS395793)·Westeros(AS215748) 대역만 넣었습니다.
+# 대형 클라우드(AWS·Google·Cloudflare) 대역은 정상 서비스도 많이 써서 넣지 않았습니다.
+# 원문도 "적용 전 원자료와 대조 필요" 라고 했으니, 업무 PC 에서는 오탐 여부를 보고 쓰세요.
+103.248.148.0/23   # AS395793 ARISK (JP) — CrowdStrike IOC 103.248.148.84 포함
+101.53.80.0/24     # AS395793 ARISK (KR) — CrowdStrike IOC 101.53.80.20 포함
+209.209.85.0/24    # AS215748 Westeros (MY) — CrowdStrike IOC 209.209.85.38 포함 (후보 단계)

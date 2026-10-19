@@ -235,7 +235,7 @@ td.nowrap{white-space:nowrap}
       <button id="emRelease" class="emrelease" type="button" disabled>긴급 차단 해제</button>
     </div>
     <div class="status"><span id="statusDot" class="dot"></span>
-      <div style="display:flex;flex-direction:column"><span id="statusText">실시간 감시 중</span><span id="hostText">센서 5개 연결됨</span></div>
+      <div style="display:flex;flex-direction:column"><span id="statusText">실시간 감시 중</span><span id="hostText">센서 연결됨</span></div>
     </div>
   </nav>
 
@@ -252,6 +252,7 @@ td.nowrap{white-space:nowrap}
         <button class="btn dark" data-sim="ai">AI 도구 침입 테스트</button>
         <button class="btn" data-sim="hacker">해커 침입 테스트</button>
         <button class="btn" data-sim="net">이상 IP 테스트</button>
+        <button class="btn" data-sim="agent" title="ARTEX 한국어판 · 2026-10 공개 사례 패턴">AI 에이전트 테스트</button>
       </div>
     </div>
 
@@ -518,7 +519,7 @@ function render(s) {
   $('lastScan').textContent = s.lastScan || '준비 중';
   $('localNote').hidden = !s.localActivity;
   $('localNote').textContent = `이 PC 안의 AI 도구 활동 ${s.localActivity}건 · 외부 침입 아님 → AI 도구 탐지에서 보기`;
-  $('hostText').textContent = `${s.host} · 센서 5개`;
+  $('hostText').textContent = `${s.host} · 센서 ${s.sensors.length}개`;
   const real = alert && inc.level === 'intrusion';
   $('statusText').textContent = !alert ? '실시간 감시 중' : real ? '침입 대응 중' : '확인 필요';
   $('statusDot').className = 'dot' + (!alert ? '' : real ? ' bad' : ' warn');

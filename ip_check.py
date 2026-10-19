@@ -27,9 +27,7 @@ import threading
 import psutil
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-INTRUSION = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst", "brute_force",
-             "remote_rdp_logon", "remote_network_logon", "user_created", "added_to_admin_group",
-             "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound"}
+from attack_taxonomy import INTRUSION_RULES as INTRUSION  # noqa: E402
 
 
 def _rdns(ip, timeout=2.0):

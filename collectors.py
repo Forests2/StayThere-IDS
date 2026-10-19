@@ -1,5 +1,21 @@
-"""수집기: 로그인 이벤트(누가), 프로세스·네트워크(어떤 프로그램)"""
+"""수집기: 로그인 이벤트(누가), 프로세스·네트워크(어떤 프로그램)
+
+2026-10 개선
+ - 보안 이벤트 4688(프로세스 생성 + 명령줄): 2초 사이에 생겼다 사라진 명령도 잡음
+   (enable_cmdline_audit.bat 로 '명령줄 기록' 을 켜야 명령줄이 들어옴)
+ - Sysmon(있으면): 이벤트 1 프로세스 생성, 22 DNS 조회
+ - 웹 서버 로그(IIS·nginx·Apache, 있으면): ARTEX 정찰 User-Agent 확인용
+ - 새 프로세스의 조상(부모의 부모…) 이름·명령줄: 내가 쓰는 AI 도구 아래에서 실행됐는지 판단
+"""
+import glob
+import ntpath
+import os
+import re
 import socket
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from urllib.parse import unquote_plus
+
 import psutil
 
 try:
@@ -16,6 +32,7 @@ LOGON_EVENTS = {
     4672: "admin_logon",
     4720: "user_created",
     4732: "added_to_admin_group",
+    4688: "process_create",
 }
 # 4624/4625 LogonType
 LOGON_TYPES = {2: "interactive", 3: "network", 7: "unlock", 10: "rdp", 11: "cached"}
@@ -70,6 +87,8 @@ class LogonCollector:
         s = list(r.StringInserts or [])
         ev = {"event_id": eid, "type": LOGON_EVENTS[eid],
               "time": str(r.TimeGenerated), "record": r.RecordNumber}
+        if eid == 4688:
+            return parse_4688(s, ev)
         if eid in (4624, 4625) and len(s) >= 19:
             ev.update({
                 "user": f"{s[6]}\\{s[5]}",
@@ -81,6 +100,45 @@ class LogonCollector:
         elif len(s) >= 2:
             ev["user"] = f"{s[2] if len(s) > 2 else ''}\\{s[1]}"
         return ev
+
+
+def _hexint(x):
+    try:
+        return int(str(x), 16) if str(x).lower().startswith("0x") else int(x)
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_4688(s, ev=None):
+    """4688 StringInserts → 프로세스 이벤트
+    0 SubjectUserSid 1 SubjectUserName 2 SubjectDomainName 3 SubjectLogonId 4 NewProcessId 5 NewProcessName
+    6 TokenElevationType 7 ProcessId(부모) 8 CommandLine 9 TargetUserSid 10 TargetUserName
+    11 TargetDomainName 12 TargetLogonId 13 ParentProcessName 14 MandatoryLabel"""
+    ev = dict(ev or {})
+    g = lambda i: s[i] if len(s) > i and s[i] is not None else ""
+    exe = g(5)
+    ev.update({"type": "process_create", "pid": _hexint(g(4)), "ppid": _hexint(g(7)),
+               "name": ntpath.basename(exe), "exe": exe, "cmdline": g(8),
+               "parent": ntpath.basename(g(13)), "username": f"{g(2)}\\{g(1)}", "source": "4688"})
+    return ev
+
+
+def ancestors(ppid, depth=5):
+    """부모 → 조부모 … 이름·명령줄 (내가 쓰는 AI 도구 아래에서 실행됐는지 판단용)"""
+    out = []
+    try:
+        p = psutil.Process(ppid)
+        for _ in range(depth):
+            try:
+                out.append({"pid": p.pid, "name": p.name(), "cmdline": " ".join(p.cmdline())[:300]})
+            except Exception:
+                out.append({"pid": p.pid, "name": "", "cmdline": ""})
+            p = p.parent()
+            if p is None or p.pid in (0, 4):
+                break
+    except Exception:
+        pass
+    return out
 
 
 class ProcessCollector:
@@ -106,6 +164,7 @@ class ProcessCollector:
                 info["parent"] = psutil.Process(info["ppid"]).name()
             except Exception:
                 info["parent"] = ""
+            info["ancestors"] = ancestors(info["ppid"])
             out.append(info)
         self.seen = current
         return out
@@ -170,4 +229,148 @@ class NetworkCollector:
                 "ai_domain": self.ip_to_domain.get(c.raddr.ip, "") if c.raddr else "",
             })
         self.seen = current
+        return out
+
+
+# ================= Sysmon (있을 때만) =================
+SYSMON_CHANNEL = "Microsoft-Windows-Sysmon/Operational"
+
+
+def parse_sysmon_xml(xml):
+    """Sysmon 이벤트 XML → (이벤트ID, 레코드번호, {필드: 값})"""
+    root = ET.fromstring(xml)
+    ns = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
+    eid = int(root.findtext("e:System/e:EventID", "0", ns))
+    rec = int(root.findtext("e:System/e:EventRecordID", "0", ns))
+    data = {d.get("Name"): (d.text or "") for d in root.findall("e:EventData/e:Data", ns)}
+    return eid, rec, data
+
+
+def sysmon_to_event(eid, data):
+    """Sysmon 1 → 프로세스 이벤트, 22 → DNS 이벤트 (나머지는 None)"""
+    if eid == 1:
+        return "process", {"pid": _hexint(data.get("ProcessId")), "ppid": _hexint(data.get("ParentProcessId")),
+                           "name": ntpath.basename(data.get("Image", "")), "exe": data.get("Image", ""),
+                           "cmdline": data.get("CommandLine", ""), "parent": ntpath.basename(data.get("ParentImage", "")),
+                           "parent_cmdline": data.get("ParentCommandLine", ""), "username": data.get("User", ""),
+                           "source": "sysmon"}
+    if eid == 22:
+        return "dns", {"query": data.get("QueryName", ""), "pid": _hexint(data.get("ProcessId")),
+                       "process": ntpath.basename(data.get("Image", "")), "exe": data.get("Image", ""),
+                       "result": data.get("QueryResults", "")[:300], "source": "sysmon"}
+    return None
+
+
+class SysmonCollector:
+    """Sysmon 이 설치돼 있으면 이벤트 1·22 를 읽음. 없거나 권한이 없으면 조용히 꺼짐."""
+
+    def __init__(self):
+        self.ok, self.last, self.error = False, 0, ""
+        if not HAS_WIN32:
+            self.error = "pywin32 없음"
+            return
+        try:
+            h = win32evtlog.EvtQuery(SYSMON_CHANNEL,
+                                     win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*")
+            evs = win32evtlog.EvtNext(h, 1)
+            if evs:
+                _, self.last, _ = parse_sysmon_xml(win32evtlog.EvtRender(evs[0], win32evtlog.EvtRenderEventXml))
+            self.ok = True
+        except Exception as e:
+            self.error = str(e)[:120]
+
+    def collect(self, limit=500):
+        if not self.ok:
+            return []
+        out = []
+        try:
+            h = win32evtlog.EvtQuery(SYSMON_CHANNEL, win32evtlog.EvtQueryChannelPath,
+                                     f"*[System[(EventID=1 or EventID=22) and EventRecordID>{self.last}]]")
+            while len(out) < limit:
+                evs = win32evtlog.EvtNext(h, 64)
+                if not evs:
+                    break
+                for e in evs:
+                    eid, rec, data = parse_sysmon_xml(win32evtlog.EvtRender(e, win32evtlog.EvtRenderEventXml))
+                    self.last = max(self.last, rec)
+                    r = sysmon_to_event(eid, data)
+                    if r:
+                        out.append(r)
+        except Exception as e:
+            if "No more" not in str(e) and "259" not in str(e):
+                self.error = str(e)[:120]
+        return out
+
+
+# ================= 웹 서버 로그 (IIS W3C · nginx/Apache combined) =================
+_COMBINED = re.compile(r'^(\S+) \S+ \S+ \[[^\]]*\] "(?:\S+) (\S+)[^"]*" (\d{3}) \S+ "[^"]*" "([^"]*)"')
+
+
+def parse_w3c_line(line, fields):
+    if not fields or line.startswith("#"):
+        return None
+    parts = line.split(" ")
+    if len(parts) != len(fields):
+        return None
+    row = dict(zip(fields, parts))
+    path = row.get("cs-uri-stem", "")
+    return {"src_ip": row.get("c-ip", ""), "path": path, "status": row.get("sc-status", ""),
+            "ua": unquote_plus(row.get("cs(User-Agent)", "").replace("+", " ")) if row.get("cs(User-Agent)") not in (None, "-") else ""}
+
+
+def parse_combined_line(line):
+    m = _COMBINED.match(line)
+    if not m:
+        return None
+    return {"src_ip": m.group(1), "path": m.group(2), "status": m.group(3), "ua": m.group(4)}
+
+
+class WebLogCollector:
+    """웹 서버 로그 폴더가 있으면 새로 추가된 줄만 읽음 (처음엔 끝에서 시작)"""
+
+    def __init__(self, dirs):
+        self.dirs = [d for d in dirs if os.path.isdir(d)]
+        self.pos, self.fields = {}, {}
+        for f in self._files():
+            try:
+                self.pos[f] = os.path.getsize(f)
+                with open(f, "r", encoding="utf-8", errors="ignore") as fh:   # IIS 는 맨 위에 #Fields 머리줄
+                    for line in fh.read(8192).splitlines():
+                        if line.startswith("#Fields:"):
+                            self.fields[f] = line[8:].split()
+            except OSError:
+                pass
+
+    def _files(self):
+        out = []
+        for d in self.dirs:
+            out += glob.glob(os.path.join(d, "**", "*.log"), recursive=True)
+        return out[:200]
+
+    def collect(self, limit=5000):
+        out = []
+        for f in self._files():
+            try:
+                size = os.path.getsize(f)
+                start = self.pos.get(f, 0)
+                if size < start:
+                    start = 0
+                if size == start:
+                    continue
+                with open(f, "r", encoding="utf-8", errors="ignore") as fh:
+                    fh.seek(start)
+                    for line in fh:
+                        line = line.rstrip("\r\n")
+                        if line.startswith("#Fields:"):
+                            self.fields[f] = line[8:].split()
+                            continue
+                        w = parse_w3c_line(line, self.fields.get(f)) if self.fields.get(f) else parse_combined_line(line)
+                        if w:
+                            w["file"] = os.path.basename(f)
+                            out.append(w)
+                        if len(out) >= limit:
+                            break
+                    self.pos[f] = fh.tell()
+            except OSError:
+                continue
         return out

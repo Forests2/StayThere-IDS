@@ -11,6 +11,7 @@
 
 ## 목차
 - [왜 만들었나](#왜-만들었나)
+- [2026-10-19 개선 — ARTEX 한국어판 · AI 에이전트 행동](#2026-10-19-개선--artex-한국어판--ai-에이전트-행동)
 - [주요 기능](#주요-기능)
 - [화면](#화면)
 - [동작 구조](#동작-구조)
@@ -37,23 +38,44 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 
 ---
 
+## 2026-10-19 개선 — ARTEX 한국어판 · AI 에이전트 행동
+
+10월 초 이후 공개된 자료(ARTEX 한국어판 `artex-ko`, 공개 방어 키트, 실제 AI 에이전트 침입 사례 분석)를 반영했습니다. 자세한 내용은 **[CHANGELOG.md](CHANGELOG.md)**.
+
+| 무엇을 | 근거 자료 | DDS 에 넣은 것 |
+|---|---|---|
+| **ARTEX 원본·한국어판 흔적** | artex-defense-kit, IT위키 ARTEX | 실행 파일 이름(`artex`, `artex-ko`), 콘솔 토큰 키 `artex_token`, 이미지 `autumn27/artex`, 콘솔 제목 → `artex_host_artifact` · 웹 로그의 정찰 User-Agent 3종 → `artex_user_agent` |
+| **AI 에이전트식 명령** | Sysdig·CSA(Marimo 사례), ReliaQuest(2026-10-07) | `echo ---` 구분자 · `head`/`Select-Object -First` · `2>nul` 같은 기계가 읽기 쉬운 명령 형식 → `agent_command_style`, 실패 후 고쳐서 바로 재실행 → `retry_loop` |
+| **도구보다 행위** | ReliaQuest | SAM·SYSTEM 저장·LSASS 덤프 → `credential_dump`, Potato 계열·SeImpersonate 확인 → `privilege_escalation`, certutil 디코드·`.b64`·조각 합치기·Public 폴더 실행 → `payload_staging` |
+| **IP 를 바꿔 가며 공격** | Sysdig(22초에 IP 11개), windshock(일회용 VPS) | 여러 외부 IP 가 같은 위험 포트로 → `distributed_ips` (잡힌 IP 전부 차단) · ARTEX 관련 IP 대역 위협 목록(`threat_feeds/artex_ranges_2026-10.txt`) |
+| **AI 개발 도구가 입구** | CSA(Marimo CVE-2026-39987) | Jupyter·Ollama 등 포트가 외부에 열림 → `dev_tool_exposed`, 외부 IP 접속 → `dev_tool_inbound` |
+| **짧게 실행된 명령 놓침** | (기존 한계) | 보안 이벤트 **4688(명령줄 포함)** 수집 + `enable_cmdline_audit.bat`, **Sysmon**(있으면) 이벤트 1·22 |
+| **AI 판정 기준** | 공개 사례: 명령 간격 중앙값 약 6초, 전체 수십 분~1시간 | 「2분 안에 끝남」 만 보던 기준을 간격 중앙값 + 지속 시간으로 재조정, AI 근거를 *직접 증거* / *행동 특징* 으로 나눔 |
+| **내 AI 도구는 침입 아님** | — | Claude Code 같은 내 AI 도구 아래에서 실행된 명령은 조상 프로세스로 확인해 **기록만** (`local_agent_command`) |
+
+![AI 에이전트 테스트](docs/images/12_ai_agent_alert.png)
+
+---
+
 ## 주요 기능
 
 | 기능 | 설명 |
 |---|---|
-| **실시간 감시** | 2초마다 프로세스 · 네트워크 연결 · Windows 로그인 기록(보안 이벤트 4624/4625/4648/4672/4720/4732)을 수집 |
+| **실시간 감시** | 2초마다 프로세스 · 네트워크 연결 · Windows 로그인 기록(보안 이벤트 4624/4625/4648/4672/4720/4732)을 수집. **명령줄 포함 프로세스 생성(4688)**, **Sysmon**(있으면, 프로세스·DNS), **웹 서버 로그**(있으면, IIS·nginx·Apache)도 읽음 |
 | **외부 침입만 경보** | 포트 스캔, ARTEX 공격 IP, 웹쉘, 정찰 명령 연속 실행, 비밀번호 대입, 외부 RDP 로그인, 계정 생성·관리자 권한 획득 등 **외부에서 들어온 흔적**만 빨간 경보. 사용자가 쓰는 AI 프로그램(ChatGPT·Claude·Cursor 등)은 침입이 아니므로 기록만 |
 | **이상한 IP 감시** | 위험 포트(RDP·SMB·WinRM 등)로 들어온 외부 IP, powershell·certutil 같은 시스템 도구의 외부 접속(원격 조종 의심), 해킹 도구 포트(4444·1337·9050 등), 이 PC 가 다른 PC 들을 스캔(감염·확산 신호), 위협 목록 파일(IP·CIDR) 대조 |
-| **AI 공격 프로그램 판별** | *기계 속도 근거*(단계 간격·소요 시간·스캔 속도) + *AI 직접 증거*(ARTEX IP·LLM 중계 서버 통신·미등록 프로그램의 LLM 접속)로 「AI 공격 프로그램 / 자동화 도구 / 사람」 판정 |
+| **AI 에이전트 행동 탐지** | 기계 형식 명령 · 실패-수정 반복 · 계정 정보 탈취 · 권한 상승 도구 · 공격 파일 반입 · IP 를 바꿔 가며 접속 (공개된 실제 AI 에이전트 침입 사례 기준) |
+| **ARTEX 원본·한국어판** | 공개 IP·포트·도메인 + 실행 파일·콘솔 흔적(`artex`, `artex-ko`, `artex_token`) + 웹 로그의 정찰 User-Agent(`artex-enrich/1.0`, `spa-api-recon`) |
+| **AI 공격 프로그램 판별** | *기계 속도 근거*(단계 간격 중앙값·지속 시간·스캔 속도) + *AI 근거*(직접 증거: ARTEX IP·흔적·User-Agent·LLM 중계 도메인 / 행동 특징: AI 에이전트식 명령·재시도)로 「AI 공격 프로그램 / 자동화 도구 / 사람」 판정 |
 | **AI 분석관** | 침입이 잡히면 1.5초 뒤 자동으로 LLM 이 사건을 분석해 판정·확신·근거·추천 조치를 냄. **API 와 GGUF 를 동시에 돌려 먼저 끝난 답을 사용 (5초 제한)** |
 | **GGUF 바로 실행** | `GGUF` 폴더에 모델을 넣으면 시작과 동시에 1개를 항상 GPU 에 로드(llama-cpp-python 직접 로드, Ollama 불필요). API 주소·키가 없거나 끊기면 GGUF 가 바로 대신함. **GPU 전용 — NVIDIA VRAM 24GB 이상, CPU 실행은 지원하지 않음** |
-| **즉각 대응 (자동 대응 스위치)** | 확실한 외부 침입은 출발지 IP 를 Windows 방화벽으로 즉시 차단 · 웹쉘 프로세스 종료 · 증거 자동 저장. 내부망·신뢰 IP 는 자동 차단 안 함 |
+| **즉각 대응 (자동 대응 스위치)** | 확실한 외부 침입은 출발지 IP 를 Windows 방화벽으로 즉시 차단(분산 IP 는 전부) · 웹쉘·계정 탈취·권한 상승·반입 파일 프로세스 종료 · 증거 자동 저장. 내부망·신뢰 IP 는 자동 차단 안 함 |
 | **긴급 차단 / 해제** | 버튼 하나로 PC 네트워크 전체 격리(들어옴·나감 차단) + 공격 프로세스 종료 + 증거 저장. 해제 버튼 · `emergency_release.bat` 로 격리 전 방화벽 정책 복구 |
 | **외부 IP 조사** | IP 하나를 넣으면 ARTEX IP 여부 · 지금 연결 · 탐지 기록 · 로그인 시도 · 차단 여부를 한 번에 보고, 그 IP 가 채워진 CMD 명령어를 줌 (`check_ip.bat` 로 CMD 에서도 가능) |
 | **공격 분류** | 탐지 규칙마다 AIPFL-IDS 데이터셋 라벨(NF-ToN-IoT-V2 / CICIoT2023)을 붙여 「Scanning → Injection → Backdoor」 처럼 공격 단계를 보여줌 |
 | **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시 |
 
-전체 탐지 규칙 25개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
+전체 탐지 규칙 38개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
 
 ---
 
@@ -90,8 +112,9 @@ flowchart LR
   subgraph PC["Windows PC"]
     C1["프로세스<br/>(psutil)"] --> M
     C2["네트워크 연결<br/>(psutil)"] --> M
-    C3["로그인 기록<br/>(Security 이벤트 · pywin32)"] --> M
-    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 25개"]
+    C3["로그인 · 명령줄 기록<br/>(Security 4624~4732 · 4688)"] --> M
+    C4["Sysmon 1·22 · 웹 서버 로그<br/>(있을 때)"] --> M
+    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 38개"]
     D --> DB[("dds.db<br/>SQLite")]
     D --> R["responder.py<br/>알림 · 자동 차단 · 긴급 격리"]
     R --> FW["Windows 방화벽<br/>(netsh)"]
@@ -142,7 +165,7 @@ python -m pip install -r requirements.txt --index-url <사내 PyPI 주소> --tru
 ```
 
 ### 동작 확인 (시뮬레이션)
-대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
+대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트 / AI 에이전트 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
 
 화면 없이 규칙만 확인:
 ```bat
@@ -154,6 +177,9 @@ python test_artex_sim.py
 |---|---|
 | `check_ip.bat` / `python ip_check.py <IP>` | 외부 IP 조사 (DDS 가 꺼져 있어도 동작) |
 | `emergency_release.bat` | 대시보드가 안 열릴 때 긴급 차단 해제. `--all-ip` 를 붙이면 DDS 가 넣은 IP 차단 규칙도 전부 삭제 |
+| `enable_cmdline_audit.bat` | **처음 한 번 실행 권장.** 보안 이벤트 4688 에 명령줄이 남게 켬 → 2초 사이에 생겼다 사라진 명령(AI 에이전트가 자주 씀)까지 잡음. 끄기: `enable_cmdline_audit.bat off` |
+
+**Sysmon (선택):** [Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) 이 설치돼 있으면 DDS 가 자동으로 이벤트 1(프로세스 생성)·22(DNS 조회)를 읽습니다. DNS 조회까지 보이므로 공격 중계 도메인(`xcai.pro` 등)을 어떤 프로그램이 찾았는지 잡을 수 있습니다. Windows 11 은 2026년 2월부터 Insider 빌드에서 Sysmon 기본 탑재를 시험 중입니다(`Dism /Online /Enable-Feature /FeatureName:Sysmon` → `sysmon -i`). 시작할 때 검은 창에 `수집: … 명령줄(4688) 켜짐 · Sysmon 켜짐` 처럼 무엇을 읽는지 표시됩니다.
 
 ---
 
@@ -173,9 +199,9 @@ python test_artex_sim.py
 ```
 DDS/
 ├─ dds_agent.py          실행 진입점 (감시 시작 + 대시보드 서버)
-├─ monitor.py            수집 루프 · 침입 시뮬레이션 시나리오 3종
-├─ collectors.py         프로세스 · 네트워크 · Windows 로그인 기록 수집
-├─ detectors.py          탐지 규칙 25개 (+ 위협 목록 파일 대조)
+├─ monitor.py            수집 루프 · 침입 시뮬레이션 시나리오 4종
+├─ collectors.py         프로세스 · 네트워크 · 로그인 기록 · 4688 명령줄 · Sysmon · 웹 로그 수집
+├─ detectors.py          탐지 규칙 38개 (+ 위협 목록 파일 대조)
 ├─ attack_taxonomy.py    규칙 설명 · AIPFL-IDS 공격 분류 연결표
 ├─ responder.py          알림 · 자동 대응 · 방화벽 차단/해제 · 긴급 격리
 ├─ llm.py                AI 분석관 (API · GGUF 동시 실행, 폴더 감시, 진행 상황)
@@ -183,14 +209,15 @@ DDS/
 ├─ storage.py            SQLite 저장소
 ├─ ip_check.py           외부 IP 조사 (CMD 겸용)
 ├─ emergency_release.py  긴급 차단 비상 해제
-├─ test_artex_sim.py     ARTEX 공격 흐름 규칙 테스트
+├─ test_artex_sim.py     규칙 테스트 (ARTEX · 실제 사례형 AI 에이전트 · 한국어판 · 오탐 · 파서)
 ├─ config.json           탐지 기준 · ARTEX IOC · 감시 목록
 ├─ static/               대시보드 화면 (index.html, A1_D.jpg)
 ├─ GGUF/                 ← .gguf 모델을 넣는 곳 (저장소에는 안 올라감)
-├─ threat_feeds/         ← 위협 IP·CIDR 목록 .txt (예시만 올라감)
+├─ threat_feeds/         ← 위협 IP·CIDR 목록 .txt (예시 + ARTEX 관련 대역만 올라감)
 ├─ ml/                   NF-ToN-IoT-V2 학습 스크립트 (AIPFL-IDS 전처리 참고)
 ├─ docs/                 규칙 목록 · AI 분석관 설명 · 화면 캡처
-├─ run_dds.bat · check_ip.bat · emergency_release.bat
+├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat
+├─ CHANGELOG.md          변경 기록
 └─ requirements.txt · requirements-ai.txt
 ```
 
@@ -212,13 +239,18 @@ DDS/
 | `ai_api_domains` | 감시하는 LLM API 도메인 |
 | `risky_inbound_ports` · `bad_outbound_ports` · `lolbin_processes` | 이상한 IP 감시 기준 |
 | `threat_feed_dir` | 위협 목록 폴더 (`.txt` 한 줄에 IP 또는 CIDR, 5분마다 다시 읽음) |
+| `artex_process_names` · `artex_host_keywords` · `artex_user_agents` | ARTEX 원본·한국어판 흔적 |
+| `agent_command_markers` · `agent_burst` · `retry_burst` | AI 에이전트식 명령 판단 기준 |
+| `credential_dump_patterns` · `privesc_tools` · `staging_patterns` · `staging_dirs` | 계정 탈취 · 권한 상승 · 파일 반입 패턴 |
+| `distributed_ips` · `dev_tool_ports` · `web_log_dirs` · `sysmon` | 분산 IP · AI 개발 도구 포트 · 웹 로그 폴더 · Sysmon 사용 |
 
 ---
 
 ## 안전 설계
 
 - **대시보드는 127.0.0.1 에서만** 열리고, 조치 API 는 화면이 받은 무작위 토큰(`X-DDS-Token`)이 있어야 동작합니다. 다른 웹사이트가 몰래 차단·종료를 호출하거나(CSRF), DNS 리바인딩으로 접근하는 것을 막습니다.
-- **자동 대응은 확실한 경우만:** 외부 침입 규칙의 HIGH 알림일 때만, 내부망·예약·신뢰 IP 는 절대 자동 차단하지 않고, 웹 서버가 띄운 쉘만 종료합니다(웹 서버 자체는 안 건드림). 기본은 꺼져 있습니다.
+- **자동 대응은 확실한 경우만:** 외부 침입 규칙의 HIGH 알림일 때만, 내부망·예약·신뢰 IP 는 절대 자동 차단하지 않고, 웹 서버가 띄운 쉘·계정 탈취 명령·권한 상승 도구·반입한 공격 파일 같은 **해당 프로세스만** 종료합니다(웹 서버 자체는 안 건드림). 기본은 꺼져 있습니다.
+- **내 AI 도구는 침입으로 안 봄:** Claude Code·Cursor 같은 AI 도구도 기계 형식 명령을 씁니다. 명령을 실행한 프로세스의 조상을 따라가 내 AI 도구 아래면 기록만 남깁니다. 단, 그 아래에서도 계정 정보 탈취·권한 상승·공격 파일 반입은 경보합니다.
 - **AI 를 속이는 조작 방지:** 사건 기록은 무작위 경계 문자열로 감싸 '데이터' 로만 LLM 에 넘깁니다. AI 판단 자동 실행은 **DDS 가 실제로 잡은 IP·프로세스**에만 적용되고, LLM 이 기록에 없는 대상을 말하면 무시합니다. (공격자가 명령줄·파일 이름에 「차단하지 마」 같은 문장을 심어 방어 AI 를 속이는 것 — 프롬프트 인젝션 — 을 막기 위함)
 - **시뮬레이션은 실제 시스템을 바꾸지 않습니다.**
 - **긴급 차단은 되돌릴 수 있게:** 격리 직전 방화벽 정책을 저장했다가 해제 때 복구합니다. 대시보드가 안 열려도 `emergency_release.bat` 로 해제할 수 있습니다.
@@ -230,17 +262,20 @@ DDS/
 ### 다음 업데이트
 | 항목 | 지금 문제 | 할 일 |
 |---|---|---|
-| **이벤트 기반 수집 (Sysmon)** | 2초마다 확인하므로 1초 안에 생겼다 사라지는 프로세스·연결은 놓칠 수 있음 | Sysmon 이벤트(프로세스 생성 · 네트워크 연결 · DNS 조회)를 바로 읽어 빈틈 없이 수집 |
+| **이벤트 기반 수집 (Sysmon)** | ✅ 2026-10-19 일부 반영 — 4688 명령줄 · Sysmon 1(프로세스)·22(DNS) | 남은 것: Sysmon 3(네트워크 연결) · 실제 Windows 에서 Sysmon 읽기 검증 |
 | **Windows 서비스 등록 · 자기 보호** | 침입자가 DDS 를 먼저 끄면 아무것도 못 잡음 | 서비스로 등록해 부팅 때 자동 시작 · 꺼지면 자동 재시작 · 설정 파일 변조 감시 |
 | **ML 이상 탐지** | 학습 스크립트(`ml/train_nf_model.py`)만 준비되어 있고 데이터셋(NF-ToN-IoT-V2)으로 학습한 적 없음 | 데이터셋으로 학습 + 이 PC 의 평소 패턴을 학습해 규칙에 없는 행동 탐지 |
-| **ARTEX 한국어판 탐지 규칙 (Sigma · Suricata)** | 공개된 규칙을 아직 확인·반영하지 않음 | 규칙 내용을 확인해 DDS 탐지 규칙으로 옮김 |
+| **ARTEX 한국어판 탐지 규칙 (Sigma · Suricata)** | ✅ 2026-10-19 반영 — 공개 방어 키트(artex-defense-kit)의 User-Agent·호스트 지표, 한국어판 이름(`artex-ko`) | 남은 것: 한국어판 저장소·티오리 공개 규칙의 원문을 확인해 차이 반영 (보도에 저장소 주소가 없어 미확인) |
 
 ### 한계
 - **실기 검증 진행 중:** 개발은 Linux 환경에서 시뮬레이션으로 검증했습니다. Windows 실기(로그인 기록 파싱, netsh 차단, 알림, 긴급 격리)는 검증 중입니다.
 - **AI 분석관(GGUF)은 GPU 전용:** NVIDIA GPU VRAM 24GB 이상이 필요하고 CPU 실행은 지원하지 않습니다.
 - **PC 단위:** 이 PC 에서 일어난 일만 봅니다. ARTEX 처럼 서버를 노리는 공격은 서버에도 설치해야 합니다.
 - **기준값은 초기값:** 탐지 기준(포트 수·시간 창 등)은 실제 데이터로 조정이 필요합니다.
-- **IOC 는 공개 보고서 1건 기준:** 위협 목록 파일(`threat_feeds/`)로 보강하세요.
+- **IOC 는 공개 보고서 기준:** 위협 목록 파일(`threat_feeds/`)로 보강하세요. 금융감독원이 특정한 공격 IP 19개는 주소가 공개되지 않아 넣지 못했습니다.
+- **명령줄 기록을 켜야 제 성능:** `enable_cmdline_audit.bat` 를 안 켜면 2초 사이에 끝난 명령은 놓칠 수 있습니다.
+- **ARTEX User-Agent 는 웹 서버가 있는 PC만:** 일반 PC 는 HTTP 내용을 보지 않습니다. 또 ARTEX 의 Chromium 기반 요청은 일반 브라우저 헤더를 써서 이 지표로 다 잡히지 않습니다(방어 키트도 같은 한계를 밝힘).
+- **AI 에이전트식 명령은 '행동 근거':** 사람이 만든 자동화 스크립트도 비슷할 수 있어, 외부 유입 흔적과 함께 볼 때 의미가 큽니다.
 
 ---
 
@@ -255,6 +290,22 @@ DDS/
   → ARTEX 한국어판 공개와 「수정 없이 쓰면 탐지되지만, AI 가 방법을 바꾸면 100% 탐지는 어렵다」 는 전문가 의견. DDS 가 IOC 대조만이 아니라 **행동 기반 규칙**(속도·웹쉘·정찰·이상 IP)을 중심에 둔 이유입니다.
 - **supple.kr** — 「한국 금융권 해킹에 등장한 '아르텍스' 결국 공개 중단」
   https://supple.kr/news/cmv1r347y001joesfedzu1o00
+- **artex-defense-kit** (MIT) — https://github.com/kh20134/artex-defense-kit
+  → `artex_user_agents`(인바운드 UA 3종, 높은 신뢰), `artex-selfupdate`·`artex_token`·`autumn27/artex`·실행 파일 이름 `artex` 같은 호스트 지표, JS 요청 폭주 휴리스틱. 「포트 8787·8788 은 단독 근거로 쓰지 말 것」 도 따름 (DDS 는 프로세스 이름이 artex 일 때만 콘솔 포트를 봄). 코드는 복사하지 않았습니다.
+- **IT위키 ARTEX** — https://itwiki.kr/w/ARTEX → ARTEX 구조(Planner·Worker·MCP·`skills/api-recon`), 콘솔 제목 문자열, 한국어판 `artex-ko` 정보
+- **머니투데이** (2026-10-07) — 「금융권 해킹 AI 공격도구 '아르텍스' 한국어판 공개」 https://www.mt.co.kr/economy/2026/10/07/2026100722125816994
+- **BleepingComputer** (2026-10-10) — ARTEX 와 AI 에이전트로 한국 은행 공격 (DeepSeek v4.1-flash · GLM-5.3 · Grok 4.6) https://bleepingcomputer.com/news/security/hacker-used-artex-ai-and-claude-agents-to-target-south-korean-banks → `ai_api_domains` 에 `api.z.ai` 추가
+- **windshock** (2026-10-04) — ARTEX 공격 인프라(일회용 VPS·대역) 재분석 https://windshock.github.io/en/post/2026-10-04-artex-financial-sector-disposable-infrastructure/ → `threat_feeds/artex_ranges_2026-10.txt`
+- **데일리시큐** — 오아시스시큐리티 AGATHA 분석, ARTEX 관련 IP 359개 중 93% 가 8787 포트 https://www.dailysecu.com/news/articleView.html?idxno=208724
+- **디지털투데이** (2026-10-15) — 티오리 ARTEX 백서 · 탐지 규칙 공개 https://www.digitaltoday.co.kr/en/view/115187/theori-releases-in-depth-analysis-white-paper-on-ai-hacking-tool-artex
+
+### AI 에이전트 침입 사례 (행동 규칙의 근거)
+- **Cloud Security Alliance** — LLM Agents as Active Post-Exploitation Tools (Marimo, 2026-06) https://labs.cloudsecurityalliance.org/research/csa-research-note-llm-agent-postexploit-marimo-20260602-csa/
+  → 기계 형식 출력(`echo '---'`·`head -N`·`2>/dev/null`), 출력→입력 연결, 22초에 IP 11개 분산 → `agent_command_style` · `distributed_ips`, AI 개발 도구가 입구 → `dev_tool_*`
+- **Sysdig 사례 보도 (TechTimes)** — https://www.techtimes.com/articles/317423/20260530/ai-vs-ai-cybersecurity-sysdig-documents-first-llm-agent-intrusion-wild.htm
+- **ReliaQuest** (2026-10-07) — How AI Agents Turned One Exposed Endpoint into a Server Takeover https://reliaquest.com/blog/threat-spotlight-how-ai-agents-turned-one-exposed-endpoint-into-a-server-takeover
+  → 명령 간격(절반이 5초 이하, 중앙값 약 6초) → AI 판정 기준, 실패-수정 반복 → `retry_loop`, PrintSpoofer·GodPotato·SAM 하이브 저장·certutil 조각 조립·`*.b64`·`C:\Users\Public\g.exe` → `privilege_escalation` · `credential_dump` · `payload_staging`
+- **BleepingComputer** — Windows 11 내장 Sysmon (Insider 빌드) https://bleepingcomputer.com/news/microsoft/microsoft-rolls-out-native-windows-11-sysmon-security-monitoring
 
 ### 침입 탐지 연구 · 데이터셋
 - **AIPFL-IDS** (Pratham Wankhade, MIT License) — https://github.com/PrathamWankhade/AIPFL-IDS (참고 시점 커밋 `dbcbad7`, 2026-10-14)
@@ -266,7 +317,7 @@ DDS/
 - **NF-ToN-IoT-V2** · **CICIoT2023** 데이터셋 — AIPFL-IDS 가 사용하는 Kaggle 배포본(`dhoogla/nftoniotv2`, `dhoogla/ciciot2023`)을 기준으로 했습니다. 원 데이터셋은 각각 University of Queensland 연구진, Canadian Institute for Cybersecurity(UNB)가 공개했습니다. 데이터셋 파일은 이 저장소에 포함되어 있지 않습니다.
 
 ### 보안 지식
-- **Microsoft Windows 보안 감사 이벤트** — 4624(로그인 성공) · 4625(실패) · 4648(명시적 자격 증명) · 4672(관리자 권한 로그인) · 4720(계정 생성) · 4732(그룹 추가), `netsh advfirewall` 방화벽 명령
+- **Microsoft Windows 보안 감사 이벤트** — 4624(로그인 성공) · 4625(실패) · 4648(명시적 자격 증명) · 4672(관리자 권한 로그인) · 4720(계정 생성) · 4732(그룹 추가) · 4688(프로세스 생성, 명령줄 감사), `netsh advfirewall` 방화벽 명령, `auditpol` 프로세스 만들기 감사(GUID `{0CCE922B-69AE-11D9-BED3-505054503030}`)
 - **LOLBAS 프로젝트** — 공격자가 악용하는 Windows 기본 도구(LOLBins) 개념 https://lolbas-project.github.io/ → `lolbin_processes`
 - **MITRE ATT&CK** — https://attack.mitre.org/ (CrowdStrike 보고서의 기법 분류 T1583.003 · T1588.007 · T1090)
 

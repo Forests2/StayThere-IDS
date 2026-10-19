@@ -46,6 +46,20 @@ RULE_TAXONOMY = {
     "ai_program_started":      ("AI 도구 실행",          None,        None),
     "ai_script_started":       ("AI 도구 실행",          None,        None),
     "local_llm_server":        ("로컬 LLM",             None,        None),
+    # 2026-10 개선: ARTEX(원본·한국어판 artex-ko) · AI 에이전트 행동
+    "artex_host_artifact":     ("AI 해킹 도구 설치 흔적",  "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "artex_user_agent":        ("AI 해킹 도구 웹 정찰",    "Scanning",  "VULNERABILITYSCAN"),
+    "js_asset_burst":          ("웹 자동 정찰",           "Scanning",  "VULNERABILITYSCAN"),
+    "ioc_domain_query":        ("공격 서버 통신",          "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "agent_command_style":     ("AI 에이전트 명령 실행",    "Injection", "COMMANDINJECTION → OTHER"),
+    "retry_loop":              ("실패-수정 반복 실행",      "Injection", "COMMANDINJECTION → OTHER"),
+    "credential_dump":         ("계정 정보 탈취",          "Password",  None),
+    "privilege_escalation":    ("권한 상승",              "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "payload_staging":         ("공격 파일 반입",          "Backdoor",  "UPLOADING_ATTACK → OTHER"),
+    "distributed_ips":         ("분산 IP 공격",            "Scanning",  None),
+    "dev_tool_inbound":        ("AI 개발 도구로 침입",      "Injection", None),
+    "dev_tool_exposed":        ("AI 개발 도구 외부 노출",    None,        None),
+    "local_agent_command":     ("AI 도구 명령 실행",        None,        None),
 }
 
 
@@ -76,7 +90,42 @@ RULE_INFO = {
     "ai_program_started":      ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "MEDIUM", "등록된 AI 프로그램 실행"),
     "ai_script_started":       ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "MEDIUM", "python/node 명령줄에 AI 라이브러리 이름"),
     "local_llm_server":        ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "LOW", "로컬 LLM 포트(11434 등) 열림"),
+    # ---- 2026-10 개선 ----
+    "artex_host_artifact":     ("AI 해킹 도구", "HIGH", "ARTEX(원본·한국어판 artex-ko) 실행 파일·콘솔·설정 흔적 (artex, artex_token, autumn27/artex 등)"),
+    "artex_user_agent":        ("AI 해킹 도구", "HIGH", "웹 서버 로그에 ARTEX 정찰 User-Agent (artex-enrich/1.0, spa-api-recon) — 웹 서버가 있는 PC만"),
+    "js_asset_burst":          ("AI 해킹 도구", "MEDIUM", "한 IP가 짧은 시간에 JS 파일을 많이 요청 (웹 자동 정찰) — 웹 서버가 있는 PC만"),
+    "ioc_domain_query":        ("AI 해킹 도구", "HIGH", "공격자가 쓴 LLM 중계 도메인(xcai.pro 등) 조회 — Sysmon DNS 기록"),
+    "agent_command_style":     ("AI 해킹 도구", "HIGH", "기계가 읽기 쉬운 형식의 명령(구분자 echo · head · 2>nul 등)이 2분 안에 3번 이상 — AI 에이전트 특징"),
+    "retry_loop":              ("AI 해킹 도구", "MEDIUM", "실패한 명령을 조금 고쳐서 바로 다시 실행하는 반복 (2분 안에 3번)"),
+    "credential_dump":         ("AI 해킹 도구", "HIGH", "SAM·SYSTEM·SECURITY 저장, LSASS 메모리 덤프 같은 계정 정보 탈취 명령"),
+    "privilege_escalation":    ("AI 해킹 도구", "HIGH", "PrintSpoofer·GodPotato 같은 권한 상승 도구, SeImpersonate 권한 확인"),
+    "payload_staging":         ("AI 해킹 도구", "HIGH", "certutil 디코드, .b64 파일, 조각 파일 합치기(copy /b), Public·Temp 폴더 실행 파일"),
+    "distributed_ips":         ("이상한 IP", "HIGH", "외부 IP 3개 이상이 2분 안에 같은 위험 포트로 들어옴 (IP 바꿔 가며 공격)"),
+    "dev_tool_inbound":        ("이상한 IP", "HIGH", "외부 IP 가 Jupyter·Ollama 같은 AI 개발 도구 포트로 접속"),
+    "dev_tool_exposed":        ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "MEDIUM", "AI 개발 도구 포트가 외부에서 접속 가능하게 열림 (127.0.0.1 아님)"),
+    "local_agent_command":     ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "LOW", "내가 쓰는 AI 도구(Claude Code 등)가 기계 형식 명령 실행 (기록만)"),
 }
+
+# ================= 규칙 묶음 (webui · responder · ip_check · llm 가 같이 씀) =================
+# 외부에서 들어온 흔적 → 이것만 빨간 경보
+INTRUSION_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
+                   "brute_force", "remote_rdp_logon", "remote_network_logon",
+                   "user_created", "added_to_admin_group",
+                   "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound",
+                   "artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domain_query",
+                   "agent_command_style", "retry_loop", "credential_dump", "privilege_escalation",
+                   "payload_staging", "distributed_ips", "dev_tool_inbound"}
+# AI 해킹 도구 쪽 사건으로 보는 규칙
+AI_ATTACK_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
+                   "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound",
+                   "artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domain_query",
+                   "agent_command_style", "retry_loop", "credential_dump", "privilege_escalation",
+                   "payload_staging", "distributed_ips", "dev_tool_inbound"}
+# 자동 대응: IP 차단 / 프로세스 종료
+BLOCK_RULES = {"ioc_ip_match", "port_scan", "brute_force", "remote_rdp_logon", "threat_feed_match",
+               "lolbin_outbound", "artex_user_agent", "distributed_ips", "dev_tool_inbound"}
+KILL_RULES = {"webserver_spawned_shell", "credential_dump", "privilege_escalation", "payload_staging",
+              "artex_host_artifact"}
 
 
 def classify(rule):

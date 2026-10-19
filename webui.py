@@ -2,7 +2,7 @@
 
 GET  /               대시보드 화면
 GET  /api/state      현재 상태(센서·스트림·침입 사건)
-POST /api/simulate   {"type":"ai"|"hacker"} 침입 시뮬레이션
+POST /api/simulate   {"type":"ai"|"hacker"|"net"|"agent"} 침입 시뮬레이션
 POST /api/ack        침입 확인 → 감시 화면으로
 POST /api/action     {"action":"block_ip"|"kill_process"|"evidence"|...}
 """
@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psutil
 
-from attack_taxonomy import RULE_INFO, chain, classify
+from attack_taxonomy import AI_ATTACK_RULES, INTRUSION_RULES, RULE_INFO, chain, classify
 from responder import blocked_list, firewall_block, firewall_unblock, kill_tree
 from responder import valid_ip as _valid_ip
 
@@ -33,22 +33,17 @@ AI_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "devserver_s
 HACKER_RULES = {"brute_force", "remote_rdp_logon", "remote_network_logon", "off_hours_logon",
                 "user_created", "added_to_admin_group"}
 
-# 외부에서 들어온 흔적 → 이것만 경보 화면을 띄움
-INTRUSION_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
-                   "brute_force", "remote_rdp_logon", "remote_network_logon",
-                   "user_created", "added_to_admin_group",
-                   # 이상한 IP 감시
-                   "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound"}
-AI_ATTACK_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
-                   "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound"}
+# INTRUSION_RULES(외부 침입 → 빨간 경보) · AI_ATTACK_RULES 는 attack_taxonomy.py 에서 한 곳으로 관리
 # 이상한 IP (위협 IP 목록 화면 표시용)
 SUSPICIOUS_RULES = {"threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound",
                     "odd_port_outbound", "new_inbound_ip", "port_scan", "ioc_ip_match", "brute_force",
-                    "remote_rdp_logon", "remote_network_logon"}
+                    "remote_rdp_logon", "remote_network_logon", "distributed_ips", "artex_user_agent",
+                    "js_asset_burst", "dev_tool_inbound"}
 
 # 침입 흔적이 아니라 '확인이 필요한 활동' 인 규칙
 CHECK_RULES = {"ai_api_connection", "ai_web_usage", "ai_program_started", "ai_script_started",
-               "local_llm_server", "browser_automation", "off_hours_logon", "devserver_spawned_shell"}
+               "local_llm_server", "browser_automation", "off_hours_logon", "devserver_spawned_shell",
+               "dev_tool_exposed", "local_agent_command"}
 
 SENSORS = [
     ("로그인", "Security 4624·4625", {"brute_force", "off_hours_logon", "user_created", "added_to_admin_group"}),
@@ -58,6 +53,10 @@ SENSORS = [
     ("네트워크", "공격 IP · 이상한 IP", {"ioc_ip_match", "port_scan", "threat_feed_match", "lolbin_outbound",
                                    "outbound_scan", "risky_port_inbound", "odd_port_outbound"}),
     ("정찰 명령", "whoami · net · systeminfo", {"recon_burst", "shell_burst"}),
+    ("AI 에이전트 명령", "기계 형식 · 재시도 · 권한 상승", {"agent_command_style", "retry_loop", "credential_dump",
+                                              "privilege_escalation", "payload_staging"}),
+    ("ARTEX 흔적", "원본 · 한국어판 · 웹 정찰", {"artex_host_artifact", "artex_user_agent", "js_asset_burst",
+                                         "ioc_domain_query", "distributed_ips", "dev_tool_inbound"}),
 ]
 
 LOGON_KO = {"rdp": "RDP", "network": "네트워크", "interactive": "대화형", "unlock": "잠금 해제", "cached": "캐시"}
@@ -109,6 +108,34 @@ def describe(a):
         return f"AI 프로그램 실행: {who}"
     if r == "local_llm_server":
         return f"로컬 LLM 서버 열림: {d.get('laddr')}"
+    if r == "artex_host_artifact":
+        return f"ARTEX(원본·한국어판) 흔적: {who} · {', '.join(map(str, d.get('keywords', [])))[:80]}"
+    if r == "artex_user_agent":
+        return f"{ip} 가 ARTEX 정찰 User-Agent '{d.get('ua')}' 로 웹 요청 ({d.get('path')})"
+    if r == "js_asset_burst":
+        return f"{ip} 가 {d.get('window_sec')}초 안에 JS 파일 {d.get('count')}개 요청 (웹 자동 정찰)"
+    if r == "ioc_domain_query":
+        return f"{d.get('process') or '프로세스 미상'} 가 공격 중계 도메인 {d.get('query')} 조회"
+    if r == "agent_command_style":
+        gap = f" · 명령 간격 중앙값 {d.get('median_gap')}초" if d.get("median_gap") is not None else ""
+        return f"기계 형식 명령 {d.get('count')}건을 {d.get('window_sec')}초 안에 실행 ({', '.join(d.get('markers', [])[:3])}){gap}"
+    if r == "local_agent_command":
+        return f"내 AI 도구가 기계 형식 명령 실행: {who}"
+    if r == "retry_loop":
+        return f"거의 같은 명령을 고쳐 가며 {d.get('variants')}번 실행 (실패 → 수정 → 재실행)"
+    if r == "credential_dump":
+        return f"계정 정보 탈취 명령: {(d.get('cmdline') or who)[:90]}"
+    if r == "privilege_escalation":
+        what = ", ".join(d.get("tools") or d.get("keywords") or [])
+        return f"권한 상승 시도 ({what}): {who}"
+    if r == "payload_staging":
+        return f"공격 파일 반입: {', '.join(d.get('reasons', []))[:100]}"
+    if r == "distributed_ips":
+        return f"외부 IP {len(d.get('ips', []))}개가 {d.get('window_sec')}초 안에 같은 포트 :{d.get('lport')} 로 (IP 바꿔 가며 공격)"
+    if r == "dev_tool_inbound":
+        return f"외부 IP {ip} 가 {d.get('tool')} 포트 :{d.get('lport')} 로 접속"
+    if r == "dev_tool_exposed":
+        return f"{d.get('tool')} 포트 {d.get('laddr')} 가 외부에서 접속 가능하게 열림 (127.0.0.1 로 바꾸세요)"
     if r == "brute_force":
         return f"{d.get('src_ip')} 에서 5분 안에 로그인 실패 {d.get('fails_5min')}회 ({who})"
     if r == "remote_rdp_logon":
@@ -139,6 +166,10 @@ def event_text(e):
              "explicit_cred_logon": "다른 계정으로 실행", "user_created": "새 계정 생성",
              "added_to_admin_group": "관리자 그룹 추가"}.get(d.get("type"), d.get("type"))
         return f"{t} · {d.get('user', '')} {LOGON_KO.get(d.get('logon_type'), '')}".strip()
+    if k == "weblog":
+        return f"웹 요청 {d.get('src_ip')} {d.get('path')} · {d.get('ua') or ''}"[:120]
+    if k == "dns":
+        return f"DNS 조회 {d.get('process') or ''} → {d.get('query')}"
     return k
 
 
@@ -194,30 +225,45 @@ def _sec(ts):
 
 def judge_ai(rows, local=()):
     """이 침입이 AI 공격 프로그램인지 판별.
-    기계 속도 근거(자동화 여부) 와 AI 근거(AI 도구라는 직접 증거) 를 따로 본다."""
+    기계 속도 근거(자동화 여부) 와 AI 근거(AI 도구라는 증거) 를 따로 본다.
+
+    2026-10 기준 재조정 — 공개된 실제 AI 에이전트 침입 사례:
+      명령 간격 절반이 5초 이하 · 중앙값 약 6초 · 전체는 수십 분~1시간 (ReliaQuest, Sysdig/CSA)
+      → '2분 안에 끝남' 만 보지 않고, 간격 중앙값이 짧은 채로 오래 이어지는 것도 자동화로 본다.
+    AI 근거는 두 단계:
+      직접 증거  — ARTEX IP·실행 흔적·정찰 User-Agent·LLM 중계 도메인·미등록 프로그램의 LLM 접속
+      행동 특징  — 기계 형식 명령, 실패-수정 반복 (LLM 에이전트에서 관측된 특징, 단독으로는 '추정')"""
     d = lambda a: a["detail"] if isinstance(a["detail"], dict) else {}
     speed, ai = [], []          # (맞음 여부, 설명)
     auto_score = 0
 
     t = sorted(_sec(a["ts"]) for a in rows)
     if len(t) >= 3:
-        gaps = [b - a for a, b in zip(t, t[1:])]
-        avg = sum(gaps) / len(gaps)
+        gaps = sorted(b - a for a, b in zip(t, t[1:]))
+        med = gaps[len(gaps) // 2]
         span = t[-1] - t[0]
-        fast = avg <= 15
-        speed.append((fast, f"단계 사이 평균 {avg:.1f}초 (사람이 직접 하면 보통 수십 초 이상)"))
-        auto_score += 35 if avg <= 5 else 20 if fast else 0
-        quick = span <= 120
-        speed.append((quick, f"탐지 {len(t)}단계를 {span:.0f}초 만에 진행"))
-        auto_score += 20 if quick else 0
+        fast = med <= 10
+        speed.append((fast, f"단계 사이 간격 중앙값 {med:.1f}초 (공개된 AI 에이전트 사례 약 6초 · 사람은 보통 수십 초 이상)"))
+        auto_score += 30 if med <= 5 else 20 if fast else 0
+        if span <= 120:
+            speed.append((True, f"탐지 {len(t)}단계를 {span:.0f}초 만에 진행"))
+            auto_score += 15
+        elif fast and len(t) >= 6:
+            speed.append((True, f"탐지 {len(t)}단계가 {span / 60:.0f}분 동안 짧은 간격으로 이어짐 (쉬지 않는 자동 실행)"))
+            auto_score += 10
+        else:
+            speed.append((False, f"탐지 {len(t)}단계를 {span / 60:.0f}분에 걸쳐 진행"))
     else:
         speed.append((False, "단계가 적어서 속도 판단 불가"))
 
+    seen = set()
     for a in rows:
         r, x = a["rule"], d(a)
+        if r in seen:
+            continue
+        seen.add(r)
         if r == "port_scan":
-            n, w = len(x.get("ports", [])), x.get("window_sec")
-            speed.append((True, f"{w}초 안에 포트 {n}개 접속 (스캐너 속도)"))
+            speed.append((True, f"{x.get('window_sec')}초 안에 포트 {len(x.get('ports', []))}개 접속 (스캐너 속도)"))
             auto_score += 15
         elif r == "recon_burst":
             speed.append((True, f"정찰 명령 {len(x.get('commands', []))}종을 {x.get('window_sec')}초 안에 연속 실행"))
@@ -228,29 +274,65 @@ def judge_ai(rows, local=()):
         elif r == "shell_burst":
             speed.append((True, f"{x.get('window_sec')}초 안에 쉘 {x.get('count')}회 실행"))
             auto_score += 10
+        elif r == "agent_command_style":
+            g = x.get("median_gap")
+            speed.append((True, f"기계 형식 명령 {x.get('count')}건을 {x.get('window_sec')}초 안에 실행"
+                                + (f" (간격 중앙값 {g}초)" if g is not None else "")))
+            auto_score += 15
+        elif r == "retry_loop":
+            speed.append((True, f"실패한 명령을 바로 고쳐서 {x.get('variants')}번 재실행"))
+            auto_score += 10
+        elif r == "distributed_ips":
+            speed.append((True, f"외부 IP {len(x.get('ips', []))}개를 {x.get('window_sec')}초 안에 바꿔 가며 접속"))
+            auto_score += 15
+        elif r == "js_asset_burst":
+            speed.append((True, f"{x.get('window_sec')}초 안에 JS 파일 {x.get('count')}개 요청 (자동 정찰)"))
+            auto_score += 10
 
-    # ---- AI 근거 ----
-    ioc_in = [a for a in rows if a["rule"] == "ioc_ip_match" and d(a).get("kind") != "outbound"]
-    ioc_out = [a for a in rows if a["rule"] == "ioc_ip_match" and d(a).get("kind") == "outbound"]
-    if ioc_in:
-        ai.append((True, f"ARTEX(AI 해킹 도구) 공개 공격 IP {d(ioc_in[0]).get('raddr_ip')} 에서 접근"))
-    if ioc_out:
-        x = d(ioc_out[0])
-        ai.append((True, f"ARTEX 서버 {x.get('raddr_ip')}:{x.get('raddr_port')} 로 통신 (AI 도구 지휘 서버)"))
+    # ---- AI 근거 ① 직접 증거 ----
+    first = lambda rule, cond=lambda a: True: next((a for a in rows if a["rule"] == rule and cond(a)), None)
+    x = first("ioc_ip_match", lambda a: d(a).get("kind") != "outbound")
+    if x:
+        ai.append((True, f"ARTEX(AI 해킹 도구) 공개 공격 IP {d(x).get('raddr_ip') or d(x).get('src_ip')} 에서 접근"))
+    x = first("ioc_ip_match", lambda a: d(a).get("kind") == "outbound")
+    if x:
+        ai.append((True, f"ARTEX 서버 {d(x).get('raddr_ip')}:{d(x).get('raddr_port')} 로 통신 (AI 도구 지휘 서버)"))
+    x = first("artex_user_agent")
+    if x:
+        ai.append((True, f"ARTEX 정찰 모듈 User-Agent '{d(x).get('ua')}' (artex-defense-kit 지표 · 높은 신뢰)"))
+    x = first("artex_host_artifact")
+    if x:
+        ai.append((True, f"ARTEX(원본·한국어판) 실행 흔적: {', '.join(map(str, d(x).get('keywords', [])))[:60]}"))
+    x = first("ioc_domain_query")
+    if x:
+        ai.append((True, f"{d(x).get('process')} 가 공격자 LLM 중계 도메인 {d(x).get('query')} 조회"))
     llm = [a for a in local if a["rule"] == "ai_api_connection" and a["severity"] == "HIGH"]
     if llm:
-        x = d(llm[0])
-        ai.append((True, f"같은 시간대에 미등록 프로그램 {x.get('process')} 가 LLM 서버 {x.get('ai_domain')} 에 접속"))
+        ai.append((True, f"같은 시간대에 미등록 프로그램 {d(llm[0]).get('process')} 가 LLM 서버 {d(llm[0]).get('ai_domain')} 에 접속"))
+    strong = any(ok for ok, _ in ai)
+
+    # ---- AI 근거 ② 행동 특징 ----
+    behav = False
+    x = first("agent_command_style")
+    if x:
+        mk = ", ".join(d(x).get("markers", [])[:3])
+        ai.append((True, f"AI 에이전트식 명령 형식 ({mk}) — 공개 사례의 LLM 에이전트 특징 (행동 근거)"))
+        behav = True
+    x = first("retry_loop")
+    if x:
+        ai.append((True, "실패 → 원인 수정 → 재실행을 기계 속도로 반복 (행동 근거)"))
+        behav = True
     if not ai:
-        ai.append((False, "ARTEX IP · LLM 통신 같은 AI 도구 직접 증거는 아직 없음"))
+        ai.append((False, "ARTEX 흔적 · LLM 통신 · AI 에이전트식 명령 같은 근거는 아직 없음"))
 
     auto_score = min(100, auto_score)
-    has_ai = any(ok for ok, _ in ai)
     automated = auto_score >= 40
-    if has_ai and automated:
+    if strong and automated:
         verdict, level = "AI 공격 프로그램 — 근거 확인됨", "ai"
-    elif has_ai:
-        verdict, level = "AI 공격 도구와 연관 — 공개 IOC 일치", "ai"
+    elif strong:
+        verdict, level = "AI 공격 도구와 연관 — 공개 지표 일치", "ai"
+    elif behav and automated:
+        verdict, level = "AI 에이전트 공격으로 보임 — 행동 근거", "ai"
     elif automated:
         verdict, level = "자동화 공격 도구 — AI 인지는 확실하지 않음", "auto"
     else:
@@ -292,15 +374,35 @@ def build_incident(mode, rows, local=()):
         scan = next((a for a in rows if a["rule"] == "port_scan"), None)
         feed = next((a for a in rows if a["rule"] == "threat_feed_match"), None)
         risky = next((a for a in rows if a["rule"] == "risky_port_inbound"), None)
-        src = ioc_in or feed or scan or risky
+        ua = next((a for a in rows if a["rule"] == "artex_user_agent"), None)
+        dist = next((a for a in rows if a["rule"] == "distributed_ips"), None)
+        devin = next((a for a in rows if a["rule"] == "dev_tool_inbound"), None)
+        src = ioc_in or ua or feed or dist or devin or scan or risky
         if src:
             target_ip = d(src).get("raddr_ip") or src["who"]
             sub = {"ioc_ip_match": "ARTEX 공격 IP (CrowdStrike 공개 IOC)", "threat_feed_match": "위협 목록 파일에 있는 IP",
+                   "artex_user_agent": f"ARTEX 정찰 User-Agent ({d(src).get('ua')})",
+                   "distributed_ips": f"IP {len(d(src).get('ips', []))}개를 바꿔 가며 :{d(src).get('lport')} 로 접속",
+                   "dev_tool_inbound": f"{d(src).get('tool')} 포트로 외부 접속",
                    "port_scan": "포트 스캔 출발지", "risky_port_inbound": f"위험 포트 :{d(src).get('lport')} 로 들어옴"}[src["rule"]]
-            who = {"main": target_ip, "sub": sub}
+            main = target_ip if src["rule"] != "distributed_ips" else " · ".join(d(src).get("ips", [])[:3])
+            who = {"main": main, "sub": sub}
         shell = next((a for a in rows if a["rule"].endswith("_spawned_shell")), None)
         recon = next((a for a in rows if a["rule"] == "recon_burst"), None)
-        if shell:
+        prio = ("credential_dump", "privilege_escalation", "payload_staging", "artex_host_artifact")
+        heavy = min((a for a in rows if a["rule"] in prio),     # 가장 위험한 단계 · HIGH 우선
+                    key=lambda a: (a["severity"] != "HIGH", prio.index(a["rule"]), a["id"]), default=None)
+        agent = next((a for a in rows if a["rule"] in ("agent_command_style", "retry_loop")), None)
+        if heavy:
+            target_pid = d(heavy).get("pid")
+            sub = {"credential_dump": "계정 정보(SAM·LSASS) 탈취 시도", "privilege_escalation": "권한 상승 도구 실행",
+                   "payload_staging": "공격 파일을 들여와 실행", "artex_host_artifact": "ARTEX 가 이 PC에서 실행됨"}[heavy["rule"]]
+            what = {"main": d(heavy).get("name") or heavy["who"],
+                    "sub": sub + (" · AI 에이전트식 명령" if agent else "")}
+        elif agent:
+            target_pid = d(agent).get("pid")
+            what = {"main": agent["who"], "sub": describe(agent)}
+        elif shell:
             target_pid = d(shell).get("pid")
             what = {"main": shell["who"], "sub": "서버 프로세스가 쉘 실행" + (" · 정찰 명령 연속" if recon else "")}
         elif recon:
@@ -377,7 +479,9 @@ def build_incident(mode, rows, local=()):
         "actions": [{"id": i, "label": l} for i, l in actions],
         "targetIp": target_ip, "targetPid": target_pid,
         "pids": sorted({d(a).get("pid") for a in rows
-                        if a["rule"] in ("webserver_spawned_shell", "lolbin_outbound", "outbound_scan", "ai_spawned_shell")
+                        if a["rule"] in ("webserver_spawned_shell", "lolbin_outbound", "outbound_scan", "ai_spawned_shell",
+                                         "credential_dump", "privilege_escalation", "payload_staging",
+                                         "artex_host_artifact", "agent_command_style", "retry_loop")
                         and d(a).get("pid")}),
         "lastId": rows[-1]["id"],
         "firstId": rows[0]["id"],
@@ -660,7 +764,7 @@ def make_handler(mon, port):
             path = self.path.split("?")[0]
             if path == "/api/simulate":
                 kind = body.get("type")
-                if kind not in ("ai", "hacker", "net"):
+                if kind not in ("ai", "hacker", "net", "agent"):
                     return self._send(400, {"ok": False, "msg": "type"})
                 ack(mon)
                 ok = mon.simulate(kind)
