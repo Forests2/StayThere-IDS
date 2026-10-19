@@ -6,7 +6,8 @@
  - 시나리오 C: 실제 사례형 AI 에이전트 (2026-10 공개 사례 패턴, 명령 간격 5~6초) → 새 규칙이 잡아야 함
  - 시나리오 D: ARTEX 한국어판(artex-ko)이 이 PC에서 실행 → 설치 흔적
  - 시나리오 E: 내가 쓰는 AI 도구(Claude Code)가 비슷한 명령을 씀 → 빨간 경보 없이 기록만
- - 수집기 파서: 4688 · Sysmon XML · IIS/nginx 로그 줄
+ - 수집기 파서: 4688 · Sysmon XML(1·3·22) · IIS/nginx 로그 줄
+ - 평소 패턴 학습: 학습한 행동은 조용, 처음 보는 행동이 몰리면 '확인 필요'
 """
 import json
 import os
@@ -166,6 +167,14 @@ def test_parsers():
     kind, ev = sysmon_to_event(eid, data)
     o2 = eid == 22 and rec == 4242 and kind == "dns" and ev["process"] == "g.exe" and ev["query"] == "api.xcai.pro"
     print(f"  Sysmon 22   → {ev['process']} → {ev['query']} {'OK' if o2 else 'FAIL'}")
+    x3 = ("<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><EventID>3</EventID>"
+          "<EventRecordID>4243</EventRecordID></System><EventData><Data Name='Image'>C:\\Windows\\System32\\certutil.exe</Data>"
+          "<Data Name='ProcessId'>7030</Data><Data Name='Initiated'>true</Data><Data Name='SourceIp'>10.0.0.5</Data>"
+          "<Data Name='SourcePort'>52011</Data><Data Name='DestinationIp'>38.244.50.120</Data>"
+          "<Data Name='DestinationPort'>18899</Data></EventData></Event>")
+    k3, e3 = sysmon_to_event(*[v for i, v in enumerate(parse_sysmon_xml(x3)) if i != 1])
+    o2 = o2 and k3 == "network" and e3["kind"] == "outbound" and e3["raddr_ip"] == "38.244.50.120" and e3["raddr_port"] == 18899
+    print(f"  Sysmon 3    → {e3['process']} → {e3['raddr_ip']}:{e3['raddr_port']} {'OK' if o2 else 'FAIL'}")
     fields = "date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken".split()
     w = parse_w3c_line("2026-10-19 03:00:01 10.0.0.5 GET /main.js - 443 - 198.51.100.7 Mozilla/5.0+(spa-api-recon) - 200 0 0 12", fields)
     o3 = w and w["ua"] == "Mozilla/5.0 (spa-api-recon)" and w["src_ip"] == "198.51.100.7"
@@ -174,6 +183,38 @@ def test_parsers():
     o4 = c and c["ua"] == "artex-enrich/1.0"
     print(f"  nginx 로그  → {c['src_ip']} '{c['ua']}' {'OK' if o4 else 'FAIL'}")
     return ok and o2 and o3 and o4
+
+
+def test_baseline():
+    """평소 패턴 학습: 8일 동안 평소 행동을 배운 뒤 → 평소 행동은 조용, 처음 보는 행동 3가지가 몰리면 알림"""
+    from baseline import Baseline
+    print("\n=== 평소 패턴 학습 ===")
+    clock = Clock(datetime(2026, 10, 1, 9, 0, 0))
+    cfg = {**CFG, "baseline": {"enabled": True, "learn_days": 7, "min_events": 200, "burst": 3, "window_sec": 600}}
+    bl = Baseline(cfg, now_fn=clock)
+    normal = [("process", {"name": "chrome.exe", "parent": "explorer.exe", "exe": r"C:\Program Files\Google\Chrome\chrome.exe"}),
+              ("process", {"name": "git.exe", "parent": "cmd.exe", "exe": r"C:\Program Files\Git\cmd\git.exe"}),
+              ("network", {"kind": "outbound", "process": "chrome.exe", "raddr_port": 443}),
+              ("process", {"name": "python.exe", "parent": "cmd.exe", "exe": r"C:\Users\jun\AppData\Local\Programs\Python\python.exe"})]
+    for day in range(8):
+        for k, ev in normal * 10:
+            bl.check(k, ev)
+        clock.tick(86400)
+    print(f"  상태: {bl.status()}")
+    quiet = sum(len(bl.check(k, ev)) for k, ev in normal)
+    odd = [("process", {"name": "rundll32.exe", "parent": "excel.exe", "exe": r"C:\Windows\System32\rundll32.exe"}),
+           ("process", {"name": "x.exe", "parent": "rundll32.exe", "exe": r"C:\ProgramData\x\x.exe"}),
+           ("network", {"kind": "outbound", "process": "x.exe", "raddr_port": 8443})]
+    hits = []
+    for k, ev in odd:
+        clock.tick(30)
+        hits += bl.check(k, ev)
+    again = sum(len(bl.check(k, ev)) for k, ev in odd)   # 한 번 본 조합은 다시 알리지 않음
+    for h in hits:
+        print(f"  {h[0]}:{h[1]} — {', '.join(h[3]['new'])}")
+    ok = bl.ready() and quiet == 0 and len(hits) == 1 and again == 0
+    print(f"  평소 행동 알림 {quiet}건 · 처음 보는 행동 알림 {len(hits)}건 · 반복 알림 {again}건 → {'OK' if ok else 'FAIL'}")
+    return ok
 
 
 def judge_check(det_rules):
@@ -194,6 +235,7 @@ if __name__ == "__main__":
     d = scenario_artex_ko()
     e = scenario_local_ai()
     parsers = test_parsers()
+    base_ok = test_baseline()
     judged = judge_check(c)
     expect = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst"}
     expect_c = {"artex_user_agent", "distributed_ips", "agent_command_style", "retry_loop", "payload_staging",
@@ -212,7 +254,8 @@ if __name__ == "__main__":
     print(f"  정상 사용 알림 수: {len(b)} ({'OK' if not b else '오탐 있음: ' + ', '.join(b)})")
     print(f"  내 AI 도구 사용 → 빨간 경보 {len(e_intr)}건 ({'OK' if not e_intr else '오탐: ' + ', '.join(e_intr)})"
           f" · 기록만: {', '.join(e) or '없음'}")
-    print(f"  수집기 파서: {'OK' if parsers else 'FAIL'} · AI 판정: {'OK' if judged else 'FAIL'}")
-    bad = miss + len(b) + len(e_intr) + (not parsers) + (not judged)
+    print(f"  수집기 파서: {'OK' if parsers else 'FAIL'} · AI 판정: {'OK' if judged else 'FAIL'}"
+          f" · 평소 패턴 학습: {'OK' if base_ok else 'FAIL'}")
+    bad = miss + len(b) + len(e_intr) + (not parsers) + (not judged) + (not base_ok)
     print(f"\n{'모두 통과' if not bad else f'실패 {bad}건'}")
     raise SystemExit(1 if bad else 0)

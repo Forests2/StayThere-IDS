@@ -3,7 +3,7 @@
 2026-10 개선
  - 보안 이벤트 4688(프로세스 생성 + 명령줄): 2초 사이에 생겼다 사라진 명령도 잡음
    (enable_cmdline_audit.bat 로 '명령줄 기록' 을 켜야 명령줄이 들어옴)
- - Sysmon(있으면): 이벤트 1 프로세스 생성, 22 DNS 조회
+ - Sysmon(있으면): 이벤트 1 프로세스 생성, 3 네트워크 연결, 22 DNS 조회
  - 웹 서버 로그(IIS·nginx·Apache, 있으면): ARTEX 정찰 User-Agent 확인용
  - 새 프로세스의 조상(부모의 부모…) 이름·명령줄: 내가 쓰는 AI 도구 아래에서 실행됐는지 판단
 """
@@ -247,13 +247,27 @@ def parse_sysmon_xml(xml):
 
 
 def sysmon_to_event(eid, data):
-    """Sysmon 1 → 프로세스 이벤트, 22 → DNS 이벤트 (나머지는 None)"""
+    """Sysmon 1 → 프로세스 이벤트, 3 → 네트워크 이벤트, 22 → DNS 이벤트 (나머지는 None)"""
     if eid == 1:
         return "process", {"pid": _hexint(data.get("ProcessId")), "ppid": _hexint(data.get("ParentProcessId")),
                            "name": ntpath.basename(data.get("Image", "")), "exe": data.get("Image", ""),
                            "cmdline": data.get("CommandLine", ""), "parent": ntpath.basename(data.get("ParentImage", "")),
                            "parent_cmdline": data.get("ParentCommandLine", ""), "username": data.get("User", ""),
                            "source": "sysmon"}
+    if eid == 3:
+        out = data.get("Initiated", "").lower() == "true"     # 이 PC 가 연결을 시작했으면 나감
+        rip = data.get("DestinationIp", "") if out else data.get("SourceIp", "")
+        if rip.startswith("127.") or rip in ("::1", "0:0:0:0:0:0:0:1", ""):
+            return None
+        return "network", {"kind": "outbound" if out else "inbound", "state": "ESTABLISHED",
+                           "pid": _hexint(data.get("ProcessId")), "process": ntpath.basename(data.get("Image", "")),
+                           "raddr_ip": rip,
+                           "raddr_port": _hexint(data.get("DestinationPort") if out else data.get("SourcePort")),
+                           "lport": _hexint(data.get("SourcePort") if out else data.get("DestinationPort")),
+                           "laddr": f"{data.get('SourceIp' if out else 'DestinationIp', '')}:"
+                                    f"{data.get('SourcePort' if out else 'DestinationPort', '')}",
+                           "rhost": data.get("DestinationHostname", "") if out else data.get("SourceHostname", ""),
+                           "ai_domain": "", "source": "sysmon"}
     if eid == 22:
         return "dns", {"query": data.get("QueryName", ""), "pid": _hexint(data.get("ProcessId")),
                        "process": ntpath.basename(data.get("Image", "")), "exe": data.get("Image", ""),
@@ -262,7 +276,7 @@ def sysmon_to_event(eid, data):
 
 
 class SysmonCollector:
-    """Sysmon 이 설치돼 있으면 이벤트 1·22 를 읽음. 없거나 권한이 없으면 조용히 꺼짐."""
+    """Sysmon 이 설치돼 있으면 이벤트 1·3·22 를 읽음. 없거나 권한이 없으면 조용히 꺼짐."""
 
     def __init__(self):
         self.ok, self.last, self.error = False, 0, ""
@@ -285,7 +299,7 @@ class SysmonCollector:
         out = []
         try:
             h = win32evtlog.EvtQuery(SYSMON_CHANNEL, win32evtlog.EvtQueryChannelPath,
-                                     f"*[System[(EventID=1 or EventID=22) and EventRecordID>{self.last}]]")
+                                     f"*[System[(EventID=1 or EventID=3 or EventID=22) and EventRecordID>{self.last}]]")
             while len(out) < limit:
                 evs = win32evtlog.EvtNext(h, 64)
                 if not evs:

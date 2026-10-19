@@ -726,6 +726,7 @@ async function loadRules() {
   const d = await getJ('/api/rules');
   $('ruleCount').textContent = d.rules.length;
   $('rulesWarn').innerHTML = d.logon ? '' : '<div class="warnbar">로그인 감시가 꺼져 있어요 (관리자 권한 + pywin32 필요). "누가 침입했나" 규칙은 지금 실제로 동작하지 않아요.</div>';
+  if (d.sources) $('rulesWarn').innerHTML += `<div class="cap" style="margin:8px 0">수집: 명령줄(4688) ${d.sources['4688'] ? '켜짐' : '꺼짐 — enable_cmdline_audit.bat'} · Sysmon ${d.sources.sysmon ? '켜짐' : '없음'} · 웹 로그 ${d.sources.weblog ? d.sources.weblog + '곳' : '없음'} · 평소 패턴 학습 ${esc(d.baseline || '-')}</div>`;
   const groups = [...new Set(d.rules.map(r => r.group))];
   $('rulesBody').innerHTML = groups.map(g => {
     const rs = d.rules.filter(r => r.group === g);

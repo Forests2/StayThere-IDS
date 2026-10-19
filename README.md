@@ -49,7 +49,8 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **도구보다 행위** | ReliaQuest | SAM·SYSTEM 저장·LSASS 덤프 → `credential_dump`, Potato 계열·SeImpersonate 확인 → `privilege_escalation`, certutil 디코드·`.b64`·조각 합치기·Public 폴더 실행 → `payload_staging` |
 | **IP 를 바꿔 가며 공격** | Sysdig(22초에 IP 11개), windshock(일회용 VPS) | 여러 외부 IP 가 같은 위험 포트로 → `distributed_ips` (잡힌 IP 전부 차단) · ARTEX 관련 IP 대역 위협 목록(`threat_feeds/artex_ranges_2026-10.txt`) |
 | **AI 개발 도구가 입구** | CSA(Marimo CVE-2026-39987) | Jupyter·Ollama 등 포트가 외부에 열림 → `dev_tool_exposed`, 외부 IP 접속 → `dev_tool_inbound` |
-| **짧게 실행된 명령 놓침** | (기존 한계) | 보안 이벤트 **4688(명령줄 포함)** 수집 + `enable_cmdline_audit.bat`, **Sysmon**(있으면) 이벤트 1·22 |
+| **짧게 실행된 명령 놓침** | (기존 한계) | 보안 이벤트 **4688(명령줄 포함)** 수집 + `enable_cmdline_audit.bat`, **Sysmon**(있으면) 이벤트 1·3·22 |
+| **규칙에 없는 행동** | (기존 계획: ML 이상 탐지) | **평소 패턴 학습** — 이 PC 의 실제 기록으로 7일 동안 배운 뒤, 처음 보는 행동이 몰리면 「확인 필요」 (`baseline_anomaly`) |
 | **AI 판정 기준** | 공개 사례: 명령 간격 중앙값 약 6초, 전체 수십 분~1시간 | 「2분 안에 끝남」 만 보던 기준을 간격 중앙값 + 지속 시간으로 재조정, AI 근거를 *직접 증거* / *행동 특징* 으로 나눔 |
 | **내 AI 도구는 침입 아님** | — | Claude Code 같은 내 AI 도구 아래에서 실행된 명령은 조상 프로세스로 확인해 **기록만** (`local_agent_command`) |
 
@@ -66,6 +67,7 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **이상한 IP 감시** | 위험 포트(RDP·SMB·WinRM 등)로 들어온 외부 IP, powershell·certutil 같은 시스템 도구의 외부 접속(원격 조종 의심), 해킹 도구 포트(4444·1337·9050 등), 이 PC 가 다른 PC 들을 스캔(감염·확산 신호), 위협 목록 파일(IP·CIDR) 대조 |
 | **AI 에이전트 행동 탐지** | 기계 형식 명령 · 실패-수정 반복 · 계정 정보 탈취 · 권한 상승 도구 · 공격 파일 반입 · IP 를 바꿔 가며 접속 (공개된 실제 AI 에이전트 침입 사례 기준) |
 | **ARTEX 원본·한국어판** | 공개 IP·포트·도메인 + 실행 파일·콘솔 흔적(`artex`, `artex-ko`, `artex_token`) + 웹 로그의 정찰 User-Agent(`artex-enrich/1.0`, `spa-api-recon`) |
+| **평소 패턴 학습** | 이 PC 에서 평소 일어나는 프로그램 조합(부모→자식)·실행 폴더·통신 포트를 7일 동안 배우고, 그 뒤 처음 보는 행동이 10분 안에 3가지 이상 몰리면 「확인 필요」 로 기록. 외부 라이브러리 없이 동작(폐쇄망 OK) |
 | **AI 공격 프로그램 판별** | *기계 속도 근거*(단계 간격 중앙값·지속 시간·스캔 속도) + *AI 근거*(직접 증거: ARTEX IP·흔적·User-Agent·LLM 중계 도메인 / 행동 특징: AI 에이전트식 명령·재시도)로 「AI 공격 프로그램 / 자동화 도구 / 사람」 판정 |
 | **AI 분석관** | 침입이 잡히면 1.5초 뒤 자동으로 LLM 이 사건을 분석해 판정·확신·근거·추천 조치를 냄. **API 와 GGUF 를 동시에 돌려 먼저 끝난 답을 사용 (5초 제한)** |
 | **GGUF 바로 실행** | `GGUF` 폴더에 모델을 넣으면 시작과 동시에 1개를 항상 GPU 에 로드(llama-cpp-python 직접 로드, Ollama 불필요). API 주소·키가 없거나 끊기면 GGUF 가 바로 대신함. **GPU 전용 — NVIDIA VRAM 24GB 이상, CPU 실행은 지원하지 않음** |
@@ -75,7 +77,7 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **공격 분류** | 탐지 규칙마다 AIPFL-IDS 데이터셋 라벨(NF-ToN-IoT-V2 / CICIoT2023)을 붙여 「Scanning → Injection → Backdoor」 처럼 공격 단계를 보여줌 |
 | **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시 |
 
-전체 탐지 규칙 38개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
+전체 탐지 규칙 39개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
 
 ---
 
@@ -114,7 +116,7 @@ flowchart LR
     C2["네트워크 연결<br/>(psutil)"] --> M
     C3["로그인 · 명령줄 기록<br/>(Security 4624~4732 · 4688)"] --> M
     C4["Sysmon 1·22 · 웹 서버 로그<br/>(있을 때)"] --> M
-    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 38개"]
+    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 39개"]
     D --> DB[("dds.db<br/>SQLite")]
     D --> R["responder.py<br/>알림 · 자동 차단 · 긴급 격리"]
     R --> FW["Windows 방화벽<br/>(netsh)"]
@@ -179,7 +181,7 @@ python test_artex_sim.py
 | `emergency_release.bat` | 대시보드가 안 열릴 때 긴급 차단 해제. `--all-ip` 를 붙이면 DDS 가 넣은 IP 차단 규칙도 전부 삭제 |
 | `enable_cmdline_audit.bat` | **처음 한 번 실행 권장.** 보안 이벤트 4688 에 명령줄이 남게 켬 → 2초 사이에 생겼다 사라진 명령(AI 에이전트가 자주 씀)까지 잡음. 끄기: `enable_cmdline_audit.bat off` |
 
-**Sysmon (선택):** [Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) 이 설치돼 있으면 DDS 가 자동으로 이벤트 1(프로세스 생성)·22(DNS 조회)를 읽습니다. DNS 조회까지 보이므로 공격 중계 도메인(`xcai.pro` 등)을 어떤 프로그램이 찾았는지 잡을 수 있습니다. Windows 11 은 2026년 2월부터 Insider 빌드에서 Sysmon 기본 탑재를 시험 중입니다(`Dism /Online /Enable-Feature /FeatureName:Sysmon` → `sysmon -i`). 시작할 때 검은 창에 `수집: … 명령줄(4688) 켜짐 · Sysmon 켜짐` 처럼 무엇을 읽는지 표시됩니다.
+**Sysmon (선택):** [Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) 이 설치돼 있으면 DDS 가 자동으로 이벤트 1(프로세스 생성)·3(네트워크 연결)·22(DNS 조회)를 읽습니다. psutil 이 2초마다 보는 연결과 겹치면 한 번만 처리합니다. DNS 조회까지 보이므로 공격 중계 도메인(`xcai.pro` 등)을 어떤 프로그램이 찾았는지 잡을 수 있습니다. Windows 11 은 2026년 2월부터 Insider 빌드에서 Sysmon 기본 탑재를 시험 중입니다(`Dism /Online /Enable-Feature /FeatureName:Sysmon` → `sysmon -i`). 시작할 때 검은 창에 `수집: … 명령줄(4688) 켜짐 · Sysmon 켜짐` 처럼 무엇을 읽는지 표시됩니다.
 
 ---
 
@@ -201,11 +203,12 @@ DDS/
 ├─ dds_agent.py          실행 진입점 (감시 시작 + 대시보드 서버)
 ├─ monitor.py            수집 루프 · 침입 시뮬레이션 시나리오 4종
 ├─ collectors.py         프로세스 · 네트워크 · 로그인 기록 · 4688 명령줄 · Sysmon · 웹 로그 수집
-├─ detectors.py          탐지 규칙 38개 (+ 위협 목록 파일 대조)
+├─ detectors.py          탐지 규칙 39개 (+ 위협 목록 파일 대조)
 ├─ attack_taxonomy.py    규칙 설명 · AIPFL-IDS 공격 분류 연결표
 ├─ responder.py          알림 · 자동 대응 · 방화벽 차단/해제 · 긴급 격리
 ├─ llm.py                AI 분석관 (API · GGUF 동시 실행, 폴더 감시, 진행 상황)
 ├─ webui.py              대시보드 서버 · API (127.0.0.1 전용)
+├─ baseline.py           평소 패턴 학습 (처음 보는 행동 → 확인 필요)
 ├─ storage.py            SQLite 저장소
 ├─ ip_check.py           외부 IP 조사 (CMD 겸용)
 ├─ emergency_release.py  긴급 차단 비상 해제
@@ -243,6 +246,7 @@ DDS/
 | `agent_command_markers` · `agent_burst` · `retry_burst` | AI 에이전트식 명령 판단 기준 |
 | `credential_dump_patterns` · `privesc_tools` · `staging_patterns` · `staging_dirs` | 계정 탈취 · 권한 상승 · 파일 반입 패턴 |
 | `distributed_ips` · `dev_tool_ports` · `web_log_dirs` · `sysmon` | 분산 IP · AI 개발 도구 포트 · 웹 로그 폴더 · Sysmon 사용 |
+| `baseline` | 평소 패턴 학습 (`learn_days` 7일 · `min_events` 3,000건 · `window_sec` 600초 안에 `burst` 3가지) |
 
 ---
 
@@ -262,9 +266,9 @@ DDS/
 ### 다음 업데이트
 | 항목 | 지금 문제 | 할 일 |
 |---|---|---|
-| **이벤트 기반 수집 (Sysmon)** | ✅ 2026-10-19 일부 반영 — 4688 명령줄 · Sysmon 1(프로세스)·22(DNS) | 남은 것: Sysmon 3(네트워크 연결) · 실제 Windows 에서 Sysmon 읽기 검증 |
+| **이벤트 기반 수집 (Sysmon)** | ✅ 2026-10-19 반영 — 4688 명령줄 · Sysmon 1(프로세스)·3(네트워크)·22(DNS) | 남은 것: 실제 Windows 에서 4688·Sysmon 읽기 검증 |
 | **Windows 서비스 등록 · 자기 보호** | 침입자가 DDS 를 먼저 끄면 아무것도 못 잡음 | 서비스로 등록해 부팅 때 자동 시작 · 꺼지면 자동 재시작 · 설정 파일 변조 감시 |
-| **ML 이상 탐지** | 학습 스크립트(`ml/train_nf_model.py`)만 준비되어 있고 데이터셋(NF-ToN-IoT-V2)으로 학습한 적 없음 | 데이터셋으로 학습 + 이 PC 의 평소 패턴을 학습해 규칙에 없는 행동 탐지 |
+| **ML 이상 탐지** | ✅ 2026-10-19 일부 반영 — 이 PC 의 평소 패턴 학습(`baseline.py`, `baseline_anomaly`) | 남은 것: NF-ToN-IoT-V2 데이터셋 학습(`ml/train_nf_model.py`)은 데이터셋 파일이 있어야 해서 아직 |
 | **ARTEX 한국어판 탐지 규칙 (Sigma · Suricata)** | ✅ 2026-10-19 반영 — 공개 방어 키트(artex-defense-kit)의 User-Agent·호스트 지표, 한국어판 이름(`artex-ko`) | 남은 것: 한국어판 저장소·티오리 공개 규칙의 원문을 확인해 차이 반영 (보도에 저장소 주소가 없어 미확인) |
 
 ### 한계
@@ -275,6 +279,7 @@ DDS/
 - **IOC 는 공개 보고서 기준:** 위협 목록 파일(`threat_feeds/`)로 보강하세요. 금융감독원이 특정한 공격 IP 19개는 주소가 공개되지 않아 넣지 못했습니다.
 - **명령줄 기록을 켜야 제 성능:** `enable_cmdline_audit.bat` 를 안 켜면 2초 사이에 끝난 명령은 놓칠 수 있습니다.
 - **ARTEX User-Agent 는 웹 서버가 있는 PC만:** 일반 PC 는 HTTP 내용을 보지 않습니다. 또 ARTEX 의 Chromium 기반 요청은 일반 브라우저 헤더를 써서 이 지표로 다 잡히지 않습니다(방어 키트도 같은 한계를 밝힘).
+- **평소 패턴 학습은 처음 7일 동안 알림 없음:** 학습 기간 중에 이미 침입이 있었다면 그것도 '평소' 로 배웁니다. 그래서 이상 탐지는 빨간 경보가 아니라 「확인 필요」 기록으로만 남깁니다.
 - **AI 에이전트식 명령은 '행동 근거':** 사람이 만든 자동화 스크립트도 비슷할 수 있어, 외부 유입 흔적과 함께 볼 때 의미가 큽니다.
 
 ---

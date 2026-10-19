@@ -7,6 +7,7 @@ from datetime import datetime
 
 from collectors import (HAS_WIN32, LogonCollector, NetworkCollector, ProcessCollector, SysmonCollector,
                         WebLogCollector, ancestors)
+from baseline import Baseline
 from detectors import RuleDetector
 
 
@@ -52,6 +53,8 @@ class Monitor:
             self.warnings.append("명령줄 기록 꺼짐 → enable_cmdline_audit.bat 를 한 번 실행하면 짧게 실행된 명령까지 잡아요")
         self.sources = {"4688": self.logon_enabled and self.cmdline_audit, "sysmon": False, "weblog": 0}
         self.recent_proc = {}     # pid → (이름, 시각): 4688 · Sysmon · psutil 이 같은 프로세스를 두 번 보고하지 않게
+        self.recent_net = {}      # (방향, 원격 IP, 원격 포트, 내 포트) → 시각: Sysmon 3 · psutil 중복 제거
+        self.baseline = Baseline(cfg, db)
 
     # ---------- 실제 감시 ----------
     def _emit(self, alerts, sim=0):
@@ -78,6 +81,24 @@ class Monitor:
             p["ancestors"] = ancestors(p["ppid"])
         self.db.add_event(self.host, "process", p, sim=sim)
         self._emit(det.on_process(p), sim=sim)
+        if not sim:
+            self._emit(self.baseline.check("process", p))
+
+    def _net_event(self, det, n, net=None):
+        """네트워크 이벤트 1건 처리 (psutil · Sysmon 3 중복 제거 후 탐지)"""
+        now = time.time()
+        if n.get("kind") in ("inbound", "outbound"):
+            key = (n["kind"], n.get("raddr_ip"), n.get("raddr_port"), n.get("lport"))
+            if now - self.recent_net.get(key, 0) < 60:
+                return
+            self.recent_net[key] = now
+            if len(self.recent_net) > 20000:
+                self.recent_net = {k: v for k, v in self.recent_net.items() if now - v < 60}
+            if net and not n.get("ai_domain"):
+                n["ai_domain"] = net.ip_to_domain.get(n.get("raddr_ip"), "")
+        self.db.add_event(self.host, "network", n)
+        self._emit(det.on_network(n))
+        self._emit(self.baseline.check("network", n))
 
     def run(self):
         logon = LogonCollector() if self.logon_enabled else None
@@ -89,6 +110,8 @@ class Monitor:
               + " · 명령줄(4688) " + ("켜짐" if self.sources["4688"] else "꺼짐 → enable_cmdline_audit.bat")
               + " · Sysmon " + ("켜짐" if self.sources["sysmon"] else "없음")
               + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음"))
+        self.baseline.refresh()
+        print(f"평소 패턴 학습: {self.baseline.status()}")
         proc = ProcessCollector()
         domains = list(dict.fromkeys(self.cfg["ai_api_domains"] + self.cfg.get("ioc_domains", [])))
         net = NetworkCollector(domains)
@@ -108,14 +131,15 @@ class Monitor:
                     for kind, ev in sysmon.collect():
                         if kind == "process":
                             self._proc_event(det, ev)
+                        elif kind == "network":
+                            self._net_event(det, ev, net)
                         else:
                             self.db.add_event(self.host, "dns", ev)
                             self._emit(det.on_dns(ev))
                 for p in proc.collect():
                     self._proc_event(det, p)
                 for n in net.collect():
-                    self.db.add_event(self.host, "network", n)
-                    self._emit(det.on_network(n))
+                    self._net_event(det, n)
                 if weblog.dirs and loop % 5 == 0:
                     for w in weblog.collect():
                         self._emit(det.on_weblog(w))
@@ -125,6 +149,8 @@ class Monitor:
                     net.refresh_dns()
                 if loop % 100 == 0:
                     det.load_feeds()
+                if loop % 1800 == 0:            # 1시간마다 평소 패턴 다시 학습
+                    self.baseline.refresh()
             except Exception as e:
                 print(f"[오류] {e}")
             self.stop_evt.wait(self.cfg["interval_sec"])

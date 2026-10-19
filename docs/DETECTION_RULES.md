@@ -1,6 +1,6 @@
 # 탐지 규칙 목록
 
-DDS 에 들어 있는 탐지 규칙 38개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성)
+DDS 에 들어 있는 탐지 규칙 39개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성)
 
 - **경보 화면**은 '외부 침입 흔적' 규칙(아래 ★)이 HIGH 로 걸릴 때만 뜹니다. PC 안에서 사용자가 쓰는 AI 프로그램 활동은 기록만 남깁니다.
 - **자동 대응**(켜져 있을 때): 🛡 = 출발지 IP 자동 차단, ⛔ = 해당 프로세스 자동 종료.
@@ -65,6 +65,12 @@ DDS 에 들어 있는 탐지 규칙 38개입니다. (`attack_taxonomy.py` 의 `R
 | `dev_tool_exposed` 🆕 | MEDIUM | AI 개발 도구 포트가 외부에서 접속 가능하게 열림 (127.0.0.1 아님) | AI 개발 도구 외부 노출 | - |
 | `local_agent_command` 🆕 | LOW | 내가 쓰는 AI 도구(Claude Code 등)가 기계 형식 명령 실행 (기록만) | AI 도구 명령 실행 | - |
 
+## 평소 패턴 (확인 필요 · 기록용)
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `baseline_anomaly` 🆕 | MEDIUM | 평소 패턴 학습(7일) 뒤, 처음 보는 프로그램 조합·실행 폴더·통신 포트가 10분 안에 3개 이상 | 평소와 다른 행동 | - |
+
 ## 기본 설정값 (config.json)
 
 | 항목 | 값 | 뜻 |
@@ -88,6 +94,7 @@ DDS 에 들어 있는 탐지 규칙 38개입니다. (`attack_taxonomy.py` 의 `R
 | `retry_burst` | 120초 · 3번 · 유사도 0.8 | 🆕 `retry_loop` 기준 |
 | `distributed_ips` | 120초 · IP 3개 | 🆕 `distributed_ips` 기준 |
 | `dev_tool_ports` | 8888(Jupyter), 11434(Ollama), 1234(LM Studio), 7860(Gradio / text-generation-webui), 8188(ComfyUI) | 🆕 `dev_tool_exposed` · `dev_tool_inbound` |
-| `sysmon` | true | 🆕 Sysmon 이 설치돼 있으면 이벤트 1(프로세스)·22(DNS) 사용 |
+| `sysmon` | true | 🆕 Sysmon 이 설치돼 있으면 이벤트 1(프로세스)·3(네트워크)·22(DNS) 사용 |
+| `baseline` | 7일 · 이벤트 3,000건 학습 뒤 · 10분 안에 3가지 | 🆕 `baseline_anomaly` 기준 (`learn_days` · `min_events` · `window_sec` · `burst`) |
 
 > 기준값은 개발자가 정한 초기값입니다. 실제 PC 에서 며칠 돌려 보고 오탐에 맞춰 조정하세요.

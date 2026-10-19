@@ -60,6 +60,7 @@ RULE_TAXONOMY = {
     "dev_tool_inbound":        ("AI 개발 도구로 침입",      "Injection", None),
     "dev_tool_exposed":        ("AI 개발 도구 외부 노출",    None,        None),
     "local_agent_command":     ("AI 도구 명령 실행",        None,        None),
+    "baseline_anomaly":        ("평소와 다른 행동",          None,        None),
 }
 
 
@@ -104,6 +105,7 @@ RULE_INFO = {
     "dev_tool_inbound":        ("이상한 IP", "HIGH", "외부 IP 가 Jupyter·Ollama 같은 AI 개발 도구 포트로 접속"),
     "dev_tool_exposed":        ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "MEDIUM", "AI 개발 도구 포트가 외부에서 접속 가능하게 열림 (127.0.0.1 아님)"),
     "local_agent_command":     ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "LOW", "내가 쓰는 AI 도구(Claude Code 등)가 기계 형식 명령 실행 (기록만)"),
+    "baseline_anomaly":        ("평소 패턴 (확인 필요 · 기록용)", "MEDIUM", "평소 패턴 학습(7일) 뒤, 처음 보는 프로그램 조합·실행 폴더·통신 포트가 10분 안에 3개 이상"),
 }
 
 # ================= 규칙 묶음 (webui · responder · ip_check · llm 가 같이 씀) =================

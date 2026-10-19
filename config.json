@@ -357,5 +357,14 @@
   "sysmon": {
     "enabled": true
   },
-  "threat_feed_dir": "threat_feeds"
+  "threat_feed_dir": "threat_feeds",
+  "_baseline_note": "평소 패턴 학습: 이 PC 의 실제 이벤트로 부모→자식·실행 폴더·통신 포트 조합을 배움. 학습 기간이 지나면 처음 보는 조합이 몰릴 때 '확인 필요' 기록",
+  "baseline": {
+    "enabled": true,
+    "learn_days": 7,
+    "min_events": 3000,
+    "burst": 3,
+    "window_sec": 600,
+    "history_days": 30
+  }
 }

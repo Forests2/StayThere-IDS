@@ -43,7 +43,7 @@ SUSPICIOUS_RULES = {"threat_feed_match", "lolbin_outbound", "outbound_scan", "ri
 # 침입 흔적이 아니라 '확인이 필요한 활동' 인 규칙
 CHECK_RULES = {"ai_api_connection", "ai_web_usage", "ai_program_started", "ai_script_started",
                "local_llm_server", "browser_automation", "off_hours_logon", "devserver_spawned_shell",
-               "dev_tool_exposed", "local_agent_command"}
+               "dev_tool_exposed", "local_agent_command", "baseline_anomaly"}
 
 SENSORS = [
     ("로그인", "Security 4624·4625", {"brute_force", "off_hours_logon", "user_created", "added_to_admin_group"}),
@@ -136,6 +136,8 @@ def describe(a):
         return f"외부 IP {ip} 가 {d.get('tool')} 포트 :{d.get('lport')} 로 접속"
     if r == "dev_tool_exposed":
         return f"{d.get('tool')} 포트 {d.get('laddr')} 가 외부에서 접속 가능하게 열림 (127.0.0.1 로 바꾸세요)"
+    if r == "baseline_anomaly":
+        return f"평소에 없던 행동 {d.get('count')}가지가 {int(d.get('window_sec', 600)) // 60}분 안에: {', '.join(d.get('new', [])[:3])}"
     if r == "brute_force":
         return f"{d.get('src_ip')} 에서 5분 안에 로그인 실패 {d.get('fails_5min')}회 ({who})"
     if r == "remote_rdp_logon":
@@ -667,7 +669,9 @@ def api_rules(mon):
         out.append({"rule": rule, "group": group, "sev": sev, "desc": desc, "cat": classify(rule),
                     "today": today.get(rule, 0), "real7": s["real"], "sim7": s["sim"],
                     "last": s["last"].replace("T", " ")})
-    return {"rules": out, "logon": mon.logon_enabled}
+    bl = getattr(mon, "baseline", None)
+    return {"rules": out, "logon": mon.logon_enabled, "sources": getattr(mon, "sources", {}),
+            "baseline": bl.status() if bl else ""}
 
 
 # ================= 설정 바꾸기 (config.json 저장 + 감시 중인 탐지기에 바로 반영) =================

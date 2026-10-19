@@ -107,6 +107,18 @@ class Storage:
             r = self.conn.execute("SELECT COALESCE(MAX(id),0) m FROM alerts").fetchone()
         return r["m"]
 
+    def iter_events(self, since, kinds=("process", "network"), limit=200000):
+        """평소 패턴 학습용: 시뮬레이션이 아닌 이벤트 (ts, kind, data)"""
+        q = ("SELECT ts, kind, data FROM events WHERE sim=0 AND ts>=? AND kind IN (%s) ORDER BY id DESC LIMIT ?"
+             % ",".join("?" * len(kinds)))
+        with self.lock:
+            rows = self.conn.execute(q, (since, *kinds, limit)).fetchall()
+        for ts, kind, data in rows:
+            try:
+                yield ts, kind, json.loads(data)
+            except Exception:
+                continue
+
     def recent_events(self, limit=8):
         return self._rows("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
 
