@@ -1,5 +1,12 @@
 # StayThere-IDS (DDS) — 개인 PC 침입 · AI 해킹 도구 탐지 시스템
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg)
+![Rules 39](https://img.shields.io/badge/detection%20rules-39-red.svg)
+
+**[English summary below](#english-summary)**
+
 > **누가 들어왔는지**, **어떤 프로그램(AI 해킹 도구 포함)이 무엇을 했는지** 실시간으로 잡고, 확실한 침입은 바로 막는 Windows 개인 PC용 보안 에이전트입니다.
 > 2026년 10월 한국 금융권 공격에 쓰인 중국산 AI 침투 도구 **ARTEX** 같은 'AI 가 지휘하는 자동 해킹' 을 막는 것을 목표로 만들었습니다.
 
@@ -24,6 +31,26 @@
 
 ---
 
+## English summary
+
+**StayThere-IDS (DDS)** is a Windows endpoint agent that detects **who broke into a PC and which program — including AI-driven hacking tools — did what**, and blocks confirmed intrusions immediately.
+It was built after the **ARTEX** campaign (Sep–Oct 2026), where an LLM-driven autonomous pentest tool was used against South Korean financial institutions.
+
+- **39 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
+- **ARTEX (original & Korean fork `artex-ko`)** — host artifacts (`artex`, `artex_token`, `autumn27/artex`), recon User-Agents in web-server logs (`artex-enrich/1.0`, `spa-api-recon`)
+- **AI-agent behavior** — machine-parsable command style (`echo ---`, `head`, `2>nul`), fail-fix-retry loops, credential dumping (SAM/LSASS), Potato-style privilege escalation, payload staging (certutil decode, chunk joining, execution from Public/Temp), IP rotation, exposed AI dev tools (Jupyter/Ollama)
+- **"Is this an AI attack program?"** — machine-speed evidence (median step gap, duration) + AI evidence (direct IOCs vs. behavioral traits), calibrated on public 2026 AI-agent intrusion cases
+- **Collection** — psutil (2 s), Security events 4624–4732 and **4688 with command line**, **Sysmon 1/3/22** if installed, IIS/nginx/Apache logs if present, plus a **per-PC baseline** of normal behavior (pure Python)
+- **Response** — auto firewall block (`netsh`) and process kill for confirmed intrusions (off by default; never internal/trusted IPs), one-click emergency isolation with snapshot restore
+- **AI analyst** — LLM (OpenAI-compatible / Anthropic API and local GGUF raced in parallel, 5 s limit, GGUF GPU-only ≥24 GB VRAM) with prompt-injection safeguards; detection and blocking work without any model
+- **Your own AI tools are not intrusions** — commands run under Claude Code / Cursor etc. are logged only
+- Dashboard UI is in Korean. Quick start: `git clone https://github.com/Forests2/StayThere-IDS.git` → `run_dds.bat` (admin). Rule test without UI: `python test_artex_sim.py`
+- Detection rules: [docs/DETECTION_RULES.md](docs/DETECTION_RULES.md) · Changes: [CHANGELOG.md](CHANGELOG.md) · License: [MIT](LICENSE)
+
+> For defensive use on machines you own or administer only.
+
+---
+
 ## 목차
 - [업데이트 내역](#-업데이트-내역)
 - [왜 만들었나](#왜-만들었나)
@@ -39,6 +66,7 @@
 - [다음 업데이트와 한계](#다음-업데이트와-한계)
 - [참고 자료와 출처](#참고-자료와-출처)
 - [주의](#주의)
+- [라이선스](#라이선스)
 
 ---
 
@@ -164,8 +192,8 @@ flowchart LR
 
 ### 실행
 ```bat
-git clone https://github.com/junryge/python_StayThere-IDS.git
-cd python_StayThere-IDS
+git clone https://github.com/Forests2/StayThere-IDS.git
+cd StayThere-IDS
 run_dds.bat
 ```
 `run_dds.bat` 를 더블클릭해도 됩니다. 관리자 권한을 요청하고, `psutil`·`pywin32` 가 없으면 설치한 뒤 대시보드(http://127.0.0.1:8765)를 엽니다. 끄려면 검은 창에서 `Ctrl+C`.
@@ -237,6 +265,7 @@ DDS/
 ├─ docs/                 규칙 목록 · AI 분석관 설명 · 화면 캡처
 ├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat
 ├─ CHANGELOG.md          변경 기록
+├─ LICENSE               MIT 라이선스
 └─ requirements.txt · requirements-ai.txt
 ```
 
@@ -353,7 +382,7 @@ DDS/
 
 ### 디자인 · 이미지
 - 대시보드 디자인: 프로젝트 제작자가 만든 UI 샘플(「StayThere」)의 색·글꼴·배치를 바탕으로 제작
-- 침입 경보 이미지(`static/A1_D.jpg`, 원본 `A1_D.png`): 프로젝트 제작자 제공 이미지
+- 침입 경보 이미지(`static/A1_D.jpg`, 원본 `A1_D.png`): 프로젝트 제작자가 Google Gemini 로 생성한 이미지
 
 ---
 
@@ -362,3 +391,12 @@ DDS/
 - **방어 목적 전용**입니다. 자신이 관리하는 PC 에서만 사용하세요.
 - 자동 대응 · 긴급 차단은 실제로 방화벽을 바꾸고 프로세스를 종료합니다. 처음에는 **자동 대응을 끈 상태**로 며칠 돌려 오탐을 확인한 뒤 켜는 것을 권합니다.
 - 공개 IOC 는 시간이 지나면 다른 사람에게 재할당될 수 있습니다. 「미리 차단」 은 필요할 때만 쓰세요.
+
+---
+
+## 라이선스
+
+[MIT License](LICENSE) © 2026 Forests2
+
+누구나 자유롭게 쓰고 고치고 배포할 수 있습니다(상업적 사용 포함). 단, 저작권 표시와 라이선스 문구를 남겨야 하고, 프로그램은 **있는 그대로 제공**되며 사용으로 생긴 결과에 대해 저작자가 책임지지 않습니다.
+참고한 프로젝트·라이브러리의 라이선스는 [사용한 오픈소스](#사용한-오픈소스)를 보세요.
