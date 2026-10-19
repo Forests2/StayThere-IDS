@@ -345,7 +345,25 @@ DDS/
 
 ## 참고 자료와 출처
 
-### 위협 정보 (ARTEX)
+> 자료 확인일: **2026-10-14** (첫 공개) · **2026-10-19** (ARTEX 한국어판 · AI 에이전트 행동 반영, 최신 위협 정보 정리)
+
+### 2026-10-19 추가 — 다음 업데이트(v1.1) 준비 자료
+정리 문서: [docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md)
+- **IT위키** — 2026년 금융권 AI 해킹 및 정보유출 사태 (10/13 기준 경과) https://itwiki.kr/w/2026년_금융권_AI_해킹_및_정보유출_사태
+  → 금융당국이 분류한 공격 유형 3가지(무작위 값 반복 조회 · 직원 업무 서비스 · 웹쉘로 로그 탈취) → 웹쉘 파일 생성 · 고객번호 열거 감지 계획
+- **아주경제** (2026-10-16) — 아르텍스, 중국서 유료 플랫폼(RedAgents.ai · ARTEX PRO)으로 재출시 https://www.ajunews.com/view/20261016094619128
+- **글로벌이코노믹** (2026-10-16) — 금융권 해킹에 등장한 아르텍스, AI 보안 플랫폼으로 재등장 https://www.g-enews.com/article/Finance/2026/10/202610161209494350cd0bfacc1c_1
+- **Stingrai** (수정 2026-10-02) — PROMPTSTEAL and PROMPTFLUX: AI-Enabled Malware https://www.stingrai.io/blog/promptsteal-promptflux-malware-llm-at-runtime
+  → 실행 중 LLM 을 부르는 악성코드 탐지 권고(스크립트 호스트·Office 의 LLM 접속, Run 키 변경, PowerShell 4104)
+- **Help Net Security** (2025-11-05) — Google uncovers malware using LLMs to operate and evade detection https://www.helpnetsecurity.com/2025/11/05/malware-using-llms/
+- **Adversa** — AI coding agent vulnerabilities, October 2026 https://adversa.ai/blog/top-ai-coding-agent-security-resources-october-2026/
+  → GitSpawn · OpenCode RCE · 에이전트 로그 삭제 사례
+- **Gen Digital** (2026-09-08) — Infostealers and your AI agent https://www.gendigital.com/blog/insights/research/infostealers-your-ai-agent
+  → AI 도구 토큰 · MCP 설정 · 프롬프트 기록을 노리는 인포스틸러(Remus · Amatera · CallbackBeaver)
+- **안랩** — 2026년 상반기 사이버위협 동향, 기업이 주목해야 할 5가지 보안 이슈 https://www.ahnlab.com/ko/contents/content-center/36241
+  → 랜섬웨어 이중 갈취 · 공급망 공격 대응 계획
+
+### 위협 정보 (ARTEX) · 2026-10-14 첫 공개 + 2026-10-19 추가
 - **CrowdStrike** — *Unknown Threat Actor Uses AI-Driven ARTEX to Target South Korean Finance* (2026-10)
   https://www.crowdstrike.com/en-us/blog/unknown-threat-actor-uses-artex-to-target-south-korean-finance/
   → `config.json` 의 `ioc_ips`(공격자 서버 1개 + 프록시 9개), `ioc_ports`(18899), `ioc_domains`(xcai.pro), 공격 흐름(웹 서비스 침투 · LLM 백엔드 사용) 은 이 보고서의 공개 지표입니다. 보고서는 공격 IP 를 `38.244.50[.]120` 처럼 표기하며, DDS 는 대조를 위해 `[.]` 를 `.` 로 바꿔 넣었습니다.
@@ -354,16 +372,16 @@ DDS/
   → ARTEX 한국어판 공개와 「수정 없이 쓰면 탐지되지만, AI 가 방법을 바꾸면 100% 탐지는 어렵다」 는 전문가 의견. DDS 가 IOC 대조만이 아니라 **행동 기반 규칙**(속도·웹쉘·정찰·이상 IP)을 중심에 둔 이유입니다.
 - **supple.kr** — 「한국 금융권 해킹에 등장한 '아르텍스' 결국 공개 중단」
   https://supple.kr/news/cmv1r347y001joesfedzu1o00
-- **artex-defense-kit** (MIT) — https://github.com/kh20134/artex-defense-kit
+- **artex-defense-kit** (MIT) · *2026-10-19 추가* — https://github.com/kh20134/artex-defense-kit
   → `artex_user_agents`(인바운드 UA 3종, 높은 신뢰), `artex-selfupdate`·`artex_token`·`autumn27/artex`·실행 파일 이름 `artex` 같은 호스트 지표, JS 요청 폭주 휴리스틱. 「포트 8787·8788 은 단독 근거로 쓰지 말 것」 도 따름 (DDS 는 프로세스 이름이 artex 일 때만 콘솔 포트를 봄). 코드는 복사하지 않았습니다.
-- **IT위키 ARTEX** — https://itwiki.kr/w/ARTEX → ARTEX 구조(Planner·Worker·MCP·`skills/api-recon`), 콘솔 제목 문자열, 한국어판 `artex-ko` 정보
-- **머니투데이** (2026-10-07) — 「금융권 해킹 AI 공격도구 '아르텍스' 한국어판 공개」 https://www.mt.co.kr/economy/2026/10/07/2026100722125816994
-- **BleepingComputer** (2026-10-10) — ARTEX 와 AI 에이전트로 한국 은행 공격 (DeepSeek v4.1-flash · GLM-5.3 · Grok 4.6) https://bleepingcomputer.com/news/security/hacker-used-artex-ai-and-claude-agents-to-target-south-korean-banks → `ai_api_domains` 에 `api.z.ai` 추가
-- **windshock** (2026-10-04) — ARTEX 공격 인프라(일회용 VPS·대역) 재분석 https://windshock.github.io/en/post/2026-10-04-artex-financial-sector-disposable-infrastructure/ → `threat_feeds/artex_ranges_2026-10.txt`
-- **데일리시큐** — 오아시스시큐리티 AGATHA 분석, ARTEX 관련 IP 359개 중 93% 가 8787 포트 https://www.dailysecu.com/news/articleView.html?idxno=208724
-- **디지털투데이** (2026-10-15) — 티오리 ARTEX 백서 · 탐지 규칙 공개 https://www.digitaltoday.co.kr/en/view/115187/theori-releases-in-depth-analysis-white-paper-on-ai-hacking-tool-artex
+- **IT위키 ARTEX** · *2026-10-19 추가* — https://itwiki.kr/w/ARTEX → ARTEX 구조(Planner·Worker·MCP·`skills/api-recon`), 콘솔 제목 문자열, 한국어판 `artex-ko` 정보
+- **머니투데이** (2026-10-07) · *2026-10-19 추가* — 「금융권 해킹 AI 공격도구 '아르텍스' 한국어판 공개」 https://www.mt.co.kr/economy/2026/10/07/2026100722125816994
+- **BleepingComputer** (2026-10-10) · *2026-10-19 추가* — ARTEX 와 AI 에이전트로 한국 은행 공격 (DeepSeek v4.1-flash · GLM-5.3 · Grok 4.6) https://bleepingcomputer.com/news/security/hacker-used-artex-ai-and-claude-agents-to-target-south-korean-banks → `ai_api_domains` 에 `api.z.ai` 추가
+- **windshock** (2026-10-04) · *2026-10-19 추가* — ARTEX 공격 인프라(일회용 VPS·대역) 재분석 https://windshock.github.io/en/post/2026-10-04-artex-financial-sector-disposable-infrastructure/ → `threat_feeds/artex_ranges_2026-10.txt`
+- **데일리시큐** · *2026-10-19 추가* — 오아시스시큐리티 AGATHA 분석, ARTEX 관련 IP 359개 중 93% 가 8787 포트 https://www.dailysecu.com/news/articleView.html?idxno=208724
+- **디지털투데이** (2026-10-15) · *2026-10-19 추가* — 티오리 ARTEX 백서 · 탐지 규칙 공개 https://www.digitaltoday.co.kr/en/view/115187/theori-releases-in-depth-analysis-white-paper-on-ai-hacking-tool-artex
 
-### AI 에이전트 침입 사례 (행동 규칙의 근거)
+### AI 에이전트 침입 사례 (행동 규칙의 근거) · 2026-10-19 추가
 - **Cloud Security Alliance** — LLM Agents as Active Post-Exploitation Tools (Marimo, 2026-06) https://labs.cloudsecurityalliance.org/research/csa-research-note-llm-agent-postexploit-marimo-20260602-csa/
   → 기계 형식 출력(`echo '---'`·`head -N`·`2>/dev/null`), 출력→입력 연결, 22초에 IP 11개 분산 → `agent_command_style` · `distributed_ips`, AI 개발 도구가 입구 → `dev_tool_*`
 - **Sysdig 사례 보도 (TechTimes)** — https://www.techtimes.com/articles/317423/20260530/ai-vs-ai-cybersecurity-sysdig-documents-first-llm-agent-intrusion-wild.htm
