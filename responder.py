@@ -34,7 +34,48 @@ RULE_KO = {"port_scan": "포트 스캔", "ioc_ip_match": "ARTEX 공격 IP", "web
            "agent_command_style": "AI 에이전트식 명령", "retry_loop": "실패-수정 반복",
            "credential_dump": "계정 정보 탈취", "privilege_escalation": "권한 상승",
            "payload_staging": "공격 파일 반입", "distributed_ips": "IP 바꿔 가며 공격",
-           "dev_tool_inbound": "AI 개발 도구로 외부 접속"}
+           "dev_tool_inbound": "AI 개발 도구로 외부 접속",
+           "webshell_file_created": "웹쉘 파일 생성", "object_enumeration": "고객번호 열거 · 대량 조회",
+           "log_theft": "로그 파일 탈취", "llm_malware_pattern": "LLM 을 부르는 악성코드",
+           "llm_then_exec": "LLM 지시로 명령 실행", "autorun_change": "자동 실행 등록",
+           "ransomware_prep": "랜섬웨어 준비 (백업 삭제)", "mass_file_change": "대량 파일 암호화 의심",
+           "git_spawned_unusual": "git 설정으로 실행", "package_install_exec": "설치 스크립트 다운로드",
+           "agent_secret_access": "AI 도구 토큰 탈취"}
+
+
+# ================= 알림 외부 전송 (Logpresso · syslog 서버 · 사내 웹훅) =================
+SEV_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+
+def notify_external(cfg, alert):
+    """config.json 의 notify 설정대로 syslog(UDP) · 웹훅(HTTP POST JSON) 으로 보냄. 실패해도 감시는 계속."""
+    n = cfg.get("notify", {}) or {}
+    if SEV_RANK.get(alert.get("severity"), 0) < SEV_RANK.get(n.get("min_severity", "HIGH"), 3):
+        return []
+    sent = []
+    body = json.dumps(alert, ensure_ascii=False, default=str)
+    sl = n.get("syslog", {}) or {}
+    if sl.get("enabled") and sl.get("host"):
+        try:
+            import socket
+            pri = 8 * 13 + (2 if alert.get("severity") == "HIGH" else 4)     # facility log audit(13), crit/warning
+            msg = f"<{pri}>1 {alert.get('ts')} {alert.get('host')} DDS - {alert.get('rule')} - {body}"
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as so:
+                so.sendto(msg.encode("utf-8")[:8000], (sl["host"], int(sl.get("port", 514))))
+            sent.append("syslog")
+        except Exception as e:
+            print(f"[알림 전송 실패 · syslog] {e}")
+    wh = n.get("webhook", {}) or {}
+    if wh.get("enabled") and wh.get("url"):
+        try:
+            import urllib.request
+            req = urllib.request.Request(wh["url"], data=body.encode("utf-8"),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            urllib.request.urlopen(req, timeout=3).read()
+            sent.append("webhook")
+        except Exception as e:
+            print(f"[알림 전송 실패 · 웹훅] {e}")
+    return sent
 
 
 # ================= 방화벽 =================
@@ -173,6 +214,12 @@ class Responder:
 
     # 알림 하나가 저장될 때마다 호출 (monitor 에서)
     def on_alert(self, alert_id, sev, rule, who, detail, sim=0):
+        if rule in INTRUSION_RULES and not sim:
+            payload = {"ts": datetime.now().isoformat(timespec="seconds"), "host": self.mon.host, "severity": sev,
+                       "rule": rule, "rule_ko": RULE_KO.get(rule, rule), "who": who,
+                       "detail": {k: v for k, v in (detail if isinstance(detail, dict) else {}).items()
+                                  if k not in ("ancestors", "text")}}
+            threading.Thread(target=notify_external, args=(self.mon.cfg, payload), daemon=True).start()
         if rule not in INTRUSION_RULES or sev != "HIGH":
             return
         with self.lock:
@@ -215,7 +262,7 @@ class Responder:
                     else:
                         self._log(f"{ip} 는 내부망·예약·신뢰 주소라서 자동 차단 안 함 — 직접 확인 후 차단하세요", True, sim, alert_id)
             # 2) 웹쉘 종료
-            if rule in KILL_RULES and d.get("pid") not in self.handled:
+            if rule in KILL_RULES and d.get("pid") and d.get("pid") not in self.handled:
                 self.handled.add(d.get("pid"))
                 ok, msg = kill_tree(d.get("pid"), sim)
                 self._log(f"{RULE_KO.get(rule, rule)} 프로세스 자동 종료 — {msg}", ok, sim, alert_id)

@@ -5,8 +5,8 @@ import threading
 import time
 from datetime import datetime
 
-from collectors import (HAS_WIN32, LogonCollector, NetworkCollector, ProcessCollector, SysmonCollector,
-                        WebLogCollector, ancestors)
+from collectors import (HAS_WIN32, AutorunCollector, LogonCollector, NetworkCollector, PowerShellCollector,
+                        ProcessCollector, SysmonCollector, WebLogCollector, WebRootCollector, ancestors)
 from baseline import Baseline
 from detectors import RuleDetector
 
@@ -51,7 +51,8 @@ class Monitor:
         self.cmdline_audit = cmdline_audit_on()
         if self.logon_enabled and not self.cmdline_audit:
             self.warnings.append("명령줄 기록 꺼짐 → enable_cmdline_audit.bat 를 한 번 실행하면 짧게 실행된 명령까지 잡아요")
-        self.sources = {"4688": self.logon_enabled and self.cmdline_audit, "sysmon": False, "weblog": 0}
+        self.sources = {"4688": self.logon_enabled and self.cmdline_audit, "sysmon": False, "weblog": 0,
+                        "ps4104": False, "webroot": 0, "autorun": False}
         self.recent_proc = {}     # pid → (이름, 시각): 4688 · Sysmon · psutil 이 같은 프로세스를 두 번 보고하지 않게
         self.recent_net = {}      # (방향, 원격 IP, 원격 포트, 내 포트) → 시각: Sysmon 3 · psutil 중복 제거
         self.baseline = Baseline(cfg, db)
@@ -100,16 +101,34 @@ class Monitor:
         self._emit(det.on_network(n))
         self._emit(self.baseline.check("network", n))
 
+    def _side_event(self, det, kind, ev, sim=0):
+        """파일 · 레지스트리 · 스크립트 · 파일 접근 이벤트 — 양이 많아서 경보가 난 것만 저장"""
+        fn = {"file": det.on_file, "registry": det.on_registry, "psblock": det.on_script,
+              "object_access": det.on_object_access, "dns": det.on_dns}[kind]
+        alerts = fn(ev)
+        if alerts or kind == "dns" or sim:
+            self.db.add_event(self.host, kind, ev if kind != "psblock" else {**ev, "text": ev.get("text", "")[:2000]}, sim=sim)
+        self._emit(alerts, sim=sim)
+
     def run(self):
         logon = LogonCollector() if self.logon_enabled else None
         sysmon = SysmonCollector() if self.cfg.get("sysmon", {}).get("enabled", True) and self.admin else None
         self.sources["sysmon"] = bool(sysmon and sysmon.ok)
+        ps = PowerShellCollector() if self.cfg.get("powershell_4104", {}).get("enabled", True) else None
+        self.sources["ps4104"] = bool(ps and ps.ok)
         weblog = WebLogCollector(self.cfg.get("web_log_dirs", []))
         self.sources["weblog"] = len(weblog.dirs)
+        webroot = WebRootCollector([] if self.sources["sysmon"] else self.cfg.get("web_root_dirs", []),
+                                   self.cfg.get("web_script_ext", []))
+        self.sources["webroot"] = len(webroot.dirs)
+        autorun = AutorunCollector()
+        self.sources["autorun"] = autorun.ok
         print("수집: 프로세스·네트워크(2초) · 로그인 " + ("켜짐" if logon else "꺼짐")
               + " · 명령줄(4688) " + ("켜짐" if self.sources["4688"] else "꺼짐 → enable_cmdline_audit.bat")
+              + " · PowerShell(4104) " + ("켜짐" if self.sources["ps4104"] else "꺼짐")
               + " · Sysmon " + ("켜짐" if self.sources["sysmon"] else "없음")
-              + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음"))
+              + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음")
+              + " · 자동 실행 감시 " + ("켜짐" if autorun.ok else "없음"))
         self.baseline.refresh()
         print(f"평소 패턴 학습: {self.baseline.status()}")
         proc = ProcessCollector()
@@ -125,6 +144,9 @@ class Monitor:
                         if ev.get("type") == "process_create":      # 4688 (명령줄 포함)
                             self._proc_event(det, ev)
                             continue
+                        if ev.get("type") == "object_access":       # 4663 (파일 접근 감사)
+                            self._side_event(det, "object_access", ev)
+                            continue
                         self.db.add_event(self.host, "logon", ev)
                         self._emit(det.on_logon(ev))
                 if sysmon and sysmon.ok:
@@ -134,8 +156,10 @@ class Monitor:
                         elif kind == "network":
                             self._net_event(det, ev, net)
                         else:
-                            self.db.add_event(self.host, "dns", ev)
-                            self._emit(det.on_dns(ev))
+                            self._side_event(det, kind, ev)
+                if ps and ps.ok:
+                    for kind, ev in ps.collect():
+                        self._side_event(det, kind, ev)
                 for p in proc.collect():
                     self._proc_event(det, p)
                 for n in net.collect():
@@ -143,6 +167,9 @@ class Monitor:
                 if weblog.dirs and loop % 5 == 0:
                     for w in weblog.collect():
                         self._emit(det.on_weblog(w))
+                if loop % 15 == 0:                # 약 30초마다: 자동 실행 · 웹 폴더 (Sysmon 이 없을 때 보완)
+                    for kind, ev in autorun.collect() + webroot.collect():
+                        self._side_event(det, kind, ev)
                 self.last_scan = datetime.now()
                 loop += 1
                 if loop % 60 == 0:
@@ -175,7 +202,8 @@ class Monitor:
                 ev = {**ev, "simulated": True}
                 self.db.add_event(self.host, ev_kind, ev, sim=1)
                 fn = {"logon": det.on_logon, "process": det.on_process, "network": det.on_network,
-                      "weblog": det.on_weblog, "dns": det.on_dns}[ev_kind]
+                      "weblog": det.on_weblog, "dns": det.on_dns, "file": det.on_file, "registry": det.on_registry,
+                      "psblock": det.on_script, "object_access": det.on_object_access}[ev_kind]
                 self._emit(fn(ev), sim=1)
         finally:
             self.sim_lock.release()
@@ -254,4 +282,36 @@ def scenario_agent():
     return steps
 
 
-SCENARIOS = {"ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent}
+def scenario_web():
+    """금융권 공격 유형 (2026-10): 고객번호 바꿔 가며 대량 조회 → 웹쉘 업로드 → 웹쉘에서 로그 폴더 압축"""
+    ip = "45.9.7.33"
+    steps = []
+    for i in range(32):
+        steps.append(("weblog", {"src_ip": ip, "path": f"/loan/agent/status?custNo=10{48230 + i * 7}", "status": "200",
+                                 "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, 0.05))
+    steps.append(("file", {"pid": 4000, "process": "w3wp.exe", "exe": r"C:\Windows\System32\inetsrv\w3wp.exe",
+                           "path": r"C:\inetpub\wwwroot\upload\help.aspx"}, 1.0))
+    steps.append(("process", _proc(7101, 4000, "cmd.exe", "w3wp.exe",
+                                   r'cmd /c "powershell Compress-Archive C:\inetpub\logs\LogFiles C:\Users\Public\l.zip"'), 1.0))
+    return steps
+
+
+def scenario_llm():
+    """LLM 을 부르는 악성코드 (PROMPTSTEAL · PROMPTFLUX 방식) + 랜섬웨어 준비
+    문서 열기 → wscript 가 LLM API 접속 → 받은 명령 실행 → 자동 실행 등록 → 백업 삭제"""
+    W = {"pid": 7201, "ppid": 6100, "name": "wscript.exe", "parent": "winword.exe",
+         "cmdline": r"wscript.exe C:\Users\Public\report.vbs", "exe": r"C:\Windows\System32\wscript.exe"}
+    steps = [("process", W, 0.5),
+             ("network", {**_net("outbound", "18.239.50.10", 443, 53110, "wscript.exe", pid=7201),
+                          "ai_domain": "router.huggingface.co"}, 1.0),
+             ("process", _proc(7202, 7201, "cmd.exe", "wscript.exe",
+                               'cmd /c "systeminfo & dir /s /b %USERPROFILE%\\Documents\\*.docx"'), 1.5),
+             ("registry", {"pid": 7201, "process": "wscript.exe", "exe": r"C:\Windows\System32\wscript.exe",
+                           "key": r"HKU\S-1-5-21\Software\Microsoft\Windows\CurrentVersion\Run\Updater",
+                           "value": r"wscript.exe C:\Users\Public\report.vbs"}, 1.0),
+             ("process", _proc(7203, 7201, "vssadmin.exe", "wscript.exe", "vssadmin delete shadows /all /quiet"), 1.0)]
+    return steps
+
+
+SCENARIOS = {"ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent,
+             "web": scenario_web, "llm": scenario_llm}

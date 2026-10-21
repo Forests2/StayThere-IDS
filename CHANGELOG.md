@@ -1,10 +1,44 @@
 # 변경 기록
 
-## 다음 (v1.1 준비 중)
+## 2026-10-21 — v1.1 (탐지 규칙 39 → 50개)
 
-- 2026-10-19: 최신 위협 정보 정리 → [docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md)
-  (금융권 사건 공격 유형 3가지, ARTEX PRO 재출시, PROMPTSTEAL·PROMPTFLUX, AI 코딩 에이전트 공격, 국내 상반기 동향)
-- 반영 예정: 웹쉘 파일 생성 · 고객번호 열거 · LLM 을 부르는 악성코드 · Run 키 변경 · PowerShell 4104 · AI 도구 토큰 보호 · GitSpawn · 랜섬웨어 준비 행위 · 패키지 설치 감시 · 알림 외부 전송
+10/19 에 정리한 최신 위협 정보([docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md))와 10/20~21 새 자료([docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md))를 반영했습니다.
+
+### 추가한 탐지 규칙 (11개)
+| 규칙 | 내용 | 근거 | 자동 대응 |
+|---|---|---|---|
+| `webshell_file_created` | 웹 서버·셸이 웹 폴더에 .aspx·.jsp·.php 등 생성 (만든 프로그램 모르면 MEDIUM) | 금융권 공격 유형 ③ | - |
+| `object_enumeration` | 웹 로그: 같은 주소에 값만 바꾼 요청 60초에 30가지 | 금융권 공격 유형 ① | IP 차단 |
+| `log_theft` | 웹 서버 아래에서 로그 폴더 압축·복사 | 금융권 공격 유형 ③ | 프로세스 종료 |
+| `llm_malware_pattern` | 스크립트 호스트·Office 의 LLM API 접속, PowerShell 의 LLM API 호출 | PROMPTSTEAL · PROMPTFLUX | 프로세스 종료 |
+| `llm_then_exec` | LLM 접속 15초 안에 같은 프로그램이 셸 실행 (내 AI 도구 제외) | PROMPTSTEAL | 프로세스 종료 |
+| `autorun_change` | Run 키·시작프로그램에 스크립트·Temp·Public 항목 | PROMPTFLUX (시작프로그램 지속성) | - |
+| `ransomware_prep` | 백업·복구 수단 삭제 | 안랩 상반기 동향 | 프로세스 종료 |
+| `mass_file_change` | 1분에 `문서.docx.xxx` 형태 파일 50개 이상 | 랜섬웨어 이중 갈취 | 프로세스 종료 |
+| `git_spawned_unusual` | git 이 셸·스크립트 호스트 실행 | GitSpawn | 프로세스 종료 |
+| `package_install_exec` | npm·pip 설치 중 다운로드·인코딩 명령 | 공급망 공격 | 프로세스 종료 |
+| `agent_secret_access` | AI 도구가 아닌 프로그램이 AI 토큰·MCP 설정 접근 | 인포스틸러(Remus 등) · ATT&CK v20 | 프로세스 종료 |
+
+### 수집
+- Sysmon 11(파일 생성) · 12·13(레지스트리) 추가 → Sysmon 1·3·11·12·13·22
+- PowerShell 스크립트 블록 4104 수집 (`enable_cmdline_audit.bat` 가 같이 켬)
+- 보안 이벤트 4663(파일 접근) 수집 + `enable_secret_audit.ps1` (선택)
+- Sysmon 이 없을 때: Run 키 · 시작프로그램 폴더 · 웹 폴더를 30초마다 비교
+- IIS 로그의 쿼리 문자열(`cs-uri-query`)까지 읽음
+- 파일 · 레지스트리 · 스크립트 이벤트는 양이 많아 **경보가 난 것만 저장**
+
+### 대응 · 화면
+- **알림 외부 전송:** syslog(UDP, Logpresso 등) · 웹훅(HTTP POST JSON). `config.json` 의 `notify`, 기본 꺼짐, 시뮬레이션은 안 보냄
+- 자동 대응: 새 규칙 중 9개는 해당 프로세스 종료, 대량 조회는 IP 차단 (자동 대응을 켰을 때만)
+- AI 판정: LLM 을 부르는 악성코드 · LLM 직후 명령 실행을 AI 직접 증거로, 대량 조회를 기계 속도 근거로 추가
+- 사건 표시: 「AI 공격 프로그램 · ARTEX 계열 / LLM 을 부르는 악성코드 / AI 에이전트」 로 구분
+- 센서 9개(웹 서버 · 악성코드·랜섬웨어 추가), 시뮬레이션 버튼 2개(웹 침투 · LLM 악성코드)
+- `tools/gen_rules_doc.py` — 규칙 문서 자동 생성
+
+### 테스트
+`python test_artex_sim.py` — 시나리오 A~I · 파서 · AI 판정 · 평소 패턴 모두 통과
+- F(웹 침투) · G(LLM 악성코드 · 랜섬웨어) · H(AI 코딩 도구 공격)의 새 규칙 11종 모두 탐지
+- I(정상 개발·운영) 빨간 경보 0건
 
 ## 2026-10-19 (2) — 다음 업데이트 항목 반영
 

@@ -3,7 +3,9 @@
 2026-10 개선
  - 보안 이벤트 4688(프로세스 생성 + 명령줄): 2초 사이에 생겼다 사라진 명령도 잡음
    (enable_cmdline_audit.bat 로 '명령줄 기록' 을 켜야 명령줄이 들어옴)
- - Sysmon(있으면): 이벤트 1 프로세스 생성, 3 네트워크 연결, 22 DNS 조회
+ - Sysmon(있으면): 이벤트 1 프로세스 생성, 3 네트워크 연결, 11 파일 생성, 12·13 레지스트리, 22 DNS 조회
+ - PowerShell 스크립트 블록(4104, 있으면) · 보안 이벤트 4663(파일 접근 감사를 켰을 때)
+ - 폴링(Sysmon 없을 때 보완): 자동 실행(Run 키 · 시작프로그램 폴더), 웹 폴더의 새 스크립트 파일
  - 웹 서버 로그(IIS·nginx·Apache, 있으면): ARTEX 정찰 User-Agent 확인용
  - 새 프로세스의 조상(부모의 부모…) 이름·명령줄: 내가 쓰는 AI 도구 아래에서 실행됐는지 판단
 """
@@ -33,6 +35,7 @@ LOGON_EVENTS = {
     4720: "user_created",
     4732: "added_to_admin_group",
     4688: "process_create",
+    4663: "object_access",
 }
 # 4624/4625 LogonType
 LOGON_TYPES = {2: "interactive", 3: "network", 7: "unlock", 10: "rdp", 11: "cached"}
@@ -89,6 +92,8 @@ class LogonCollector:
               "time": str(r.TimeGenerated), "record": r.RecordNumber}
         if eid == 4688:
             return parse_4688(s, ev)
+        if eid == 4663:
+            return parse_4663(s, ev)
         if eid in (4624, 4625) and len(s) >= 19:
             ev.update({
                 "user": f"{s[6]}\\{s[5]}",
@@ -120,6 +125,17 @@ def parse_4688(s, ev=None):
     ev.update({"type": "process_create", "pid": _hexint(g(4)), "ppid": _hexint(g(7)),
                "name": ntpath.basename(exe), "exe": exe, "cmdline": g(8),
                "parent": ntpath.basename(g(13)), "username": f"{g(2)}\\{g(1)}", "source": "4688"})
+    return ev
+
+
+def parse_4663(s, ev=None):
+    """4663 (개체 접근) StringInserts → 파일 접근 이벤트
+    0 SubjectUserSid 1 SubjectUserName 2 SubjectDomainName 3 SubjectLogonId 4 ObjectServer 5 ObjectType
+    6 ObjectName 7 HandleId 8 AccessList 9 AccessMask 10 ProcessId 11 ProcessName"""
+    ev = dict(ev or {})
+    g = lambda i: s[i] if len(s) > i and s[i] is not None else ""
+    ev.update({"type": "object_access", "object": g(6), "object_type": g(5), "pid": _hexint(g(10)),
+               "process": ntpath.basename(g(11)), "exe": g(11), "user": f"{g(2)}\\{g(1)}", "source": "4663"})
     return ev
 
 
@@ -268,6 +284,13 @@ def sysmon_to_event(eid, data):
                                     f"{data.get('SourcePort' if out else 'DestinationPort', '')}",
                            "rhost": data.get("DestinationHostname", "") if out else data.get("SourceHostname", ""),
                            "ai_domain": "", "source": "sysmon"}
+    if eid == 11:
+        return "file", {"pid": _hexint(data.get("ProcessId")), "process": ntpath.basename(data.get("Image", "")),
+                        "exe": data.get("Image", ""), "path": data.get("TargetFilename", ""), "source": "sysmon"}
+    if eid in (12, 13):
+        return "registry", {"pid": _hexint(data.get("ProcessId")), "process": ntpath.basename(data.get("Image", "")),
+                            "exe": data.get("Image", ""), "key": data.get("TargetObject", ""),
+                            "value": data.get("Details", ""), "op": data.get("EventType", ""), "source": "sysmon"}
     if eid == 22:
         return "dns", {"query": data.get("QueryName", ""), "pid": _hexint(data.get("ProcessId")),
                        "process": ntpath.basename(data.get("Image", "")), "exe": data.get("Image", ""),
@@ -275,8 +298,9 @@ def sysmon_to_event(eid, data):
     return None
 
 
-class SysmonCollector:
-    """Sysmon 이 설치돼 있으면 이벤트 1·3·22 를 읽음. 없거나 권한이 없으면 조용히 꺼짐."""
+class EvtChannelCollector:
+    """Windows 이벤트 채널(Sysmon · PowerShell 등)에서 새 이벤트만 읽음. 없거나 권한이 없으면 조용히 꺼짐."""
+    channel, ids = "", ()
 
     def __init__(self):
         self.ok, self.last, self.error = False, 0, ""
@@ -284,7 +308,7 @@ class SysmonCollector:
             self.error = "pywin32 없음"
             return
         try:
-            h = win32evtlog.EvtQuery(SYSMON_CHANNEL,
+            h = win32evtlog.EvtQuery(self.channel,
                                      win32evtlog.EvtQueryChannelPath | win32evtlog.EvtQueryReverseDirection, "*")
             evs = win32evtlog.EvtNext(h, 1)
             if evs:
@@ -293,13 +317,17 @@ class SysmonCollector:
         except Exception as e:
             self.error = str(e)[:120]
 
-    def collect(self, limit=500):
+    def convert(self, eid, data):
+        raise NotImplementedError
+
+    def collect(self, limit=1000):
         if not self.ok:
             return []
         out = []
+        cond = " or ".join(f"EventID={i}" for i in self.ids)
         try:
-            h = win32evtlog.EvtQuery(SYSMON_CHANNEL, win32evtlog.EvtQueryChannelPath,
-                                     f"*[System[(EventID=1 or EventID=3 or EventID=22) and EventRecordID>{self.last}]]")
+            h = win32evtlog.EvtQuery(self.channel, win32evtlog.EvtQueryChannelPath,
+                                     f"*[System[({cond}) and EventRecordID>{self.last}]]")
             while len(out) < limit:
                 evs = win32evtlog.EvtNext(h, 64)
                 if not evs:
@@ -307,13 +335,127 @@ class SysmonCollector:
                 for e in evs:
                     eid, rec, data = parse_sysmon_xml(win32evtlog.EvtRender(e, win32evtlog.EvtRenderEventXml))
                     self.last = max(self.last, rec)
-                    r = sysmon_to_event(eid, data)
+                    r = self.convert(eid, data)
                     if r:
                         out.append(r)
         except Exception as e:
             if "No more" not in str(e) and "259" not in str(e):
                 self.error = str(e)[:120]
         return out
+
+
+class SysmonCollector(EvtChannelCollector):
+    """Sysmon 이벤트 1·3·11·12·13·22"""
+    channel, ids = SYSMON_CHANNEL, (1, 3, 11, 12, 13, 22)
+
+    def convert(self, eid, data):
+        return sysmon_to_event(eid, data)
+
+
+POWERSHELL_CHANNEL = "Microsoft-Windows-PowerShell/Operational"
+
+
+def ps4104_to_event(eid, data):
+    """PowerShell 4104 (스크립트 블록 기록) → 스크립트 내용 이벤트"""
+    if eid != 4104 or not data.get("ScriptBlockText"):
+        return None
+    return "psblock", {"text": data.get("ScriptBlockText", "")[:20000], "path": data.get("Path", ""),
+                       "block_id": data.get("ScriptBlockId", ""), "part": data.get("MessageNumber", ""),
+                       "source": "4104"}
+
+
+class PowerShellCollector(EvtChannelCollector):
+    """PowerShell 스크립트 블록 기록 (enable_cmdline_audit.bat 가 켬)"""
+    channel, ids = POWERSHELL_CHANNEL, (4104,)
+
+    def convert(self, eid, data):
+        return ps4104_to_event(eid, data)
+
+
+# ================= 폴링 보완 (Sysmon 이 없을 때) =================
+AUTORUN_KEYS = [r"Software\Microsoft\Windows\CurrentVersion\Run",
+                r"Software\Microsoft\Windows\CurrentVersion\RunOnce"]
+
+
+class AutorunCollector:
+    """Run · RunOnce 키(HKCU · HKLM)와 시작프로그램 폴더를 주기적으로 비교 → 새로 생긴 항목"""
+
+    def __init__(self):
+        self.ok = os.name == "nt"
+        self.dirs = [d for d in (os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"),
+                                 os.path.expandvars(r"%PROGRAMDATA%\Microsoft\Windows\Start Menu\Programs\StartUp"))
+                     if os.path.isdir(d)] if self.ok else []
+        self.seen = self._snapshot() if self.ok else {}
+
+    def _snapshot(self):
+        snap = {}
+        try:
+            import winreg
+            for hive, hname in ((winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")):
+                for sub in AUTORUN_KEYS:
+                    try:
+                        k = winreg.OpenKey(hive, sub)
+                    except OSError:
+                        continue
+                    i = 0
+                    while True:
+                        try:
+                            n, v, _ = winreg.EnumValue(k, i)
+                        except OSError:
+                            break
+                        snap[f"{hname}\\{sub}\\{n}"] = ("registry", str(v))
+                        i += 1
+        except Exception:
+            pass
+        for d in self.dirs:
+            try:
+                for n in os.listdir(d):
+                    snap[os.path.join(d, n)] = ("file", "")
+            except OSError:
+                pass
+        return snap
+
+    def collect(self):
+        if not self.ok:
+            return []
+        now = self._snapshot()
+        out = []
+        for k, (kind, v) in now.items():
+            if self.seen.get(k) != (kind, v):
+                if kind == "registry":
+                    out.append(("registry", {"key": k, "value": v, "process": "", "exe": "", "source": "poll"}))
+                else:
+                    out.append(("file", {"path": k, "process": "", "exe": "", "source": "poll"}))
+        self.seen = now
+        return out
+
+
+class WebRootCollector:
+    """웹 폴더(예: C:\\inetpub\\wwwroot)에 새로 생긴 스크립트 파일 — 만든 프로그램은 모름"""
+
+    def __init__(self, dirs, exts):
+        self.dirs = [d for d in dirs if os.path.isdir(d)]
+        self.exts = tuple(e.lower() for e in exts)
+        self.seen = self._snapshot()
+
+    def _snapshot(self):
+        out = set()
+        for d in self.dirs:
+            for root, _, files in os.walk(d):
+                for f in files:
+                    if f.lower().endswith(self.exts):
+                        out.add(os.path.join(root, f))
+                if len(out) > 50000:
+                    return out
+        return out
+
+    def collect(self):
+        if not self.dirs:
+            return []
+        now = self._snapshot()
+        new = now - self.seen
+        self.seen = now
+        return [("file", {"path": p, "process": "", "exe": "", "source": "poll"}) for p in sorted(new)[:200]]
 
 
 # ================= 웹 서버 로그 (IIS W3C · nginx/Apache combined) =================
@@ -328,6 +470,9 @@ def parse_w3c_line(line, fields):
         return None
     row = dict(zip(fields, parts))
     path = row.get("cs-uri-stem", "")
+    q = row.get("cs-uri-query", "-")
+    if q and q != "-":
+        path = f"{path}?{q}"
     return {"src_ip": row.get("c-ip", ""), "path": path, "status": row.get("sc-status", ""),
             "ua": unquote_plus(row.get("cs(User-Agent)", "").replace("+", " ")) if row.get("cs(User-Agent)") not in (None, "-") else ""}
 

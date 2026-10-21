@@ -61,6 +61,18 @@ RULE_TAXONOMY = {
     "dev_tool_exposed":        ("AI 개발 도구 외부 노출",    None,        None),
     "local_agent_command":     ("AI 도구 명령 실행",        None,        None),
     "baseline_anomaly":        ("평소와 다른 행동",          None,        None),
+    # v1.1 (2026-10-21)
+    "webshell_file_created":   ("웹쉘 설치",              "Backdoor",  "UPLOADING_ATTACK → OTHER"),
+    "object_enumeration":      ("고객번호 열거 · 대량 조회", "Injection", "VULNERABILITYSCAN"),
+    "log_theft":               ("로그 파일 탈취",          "Backdoor",  None),
+    "llm_malware_pattern":     ("LLM 을 부르는 악성코드",   "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "llm_then_exec":           ("LLM 지시로 명령 실행",     "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "autorun_change":          ("자동 실행 등록",          "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "ransomware_prep":         ("랜섬웨어 준비",           "Ransomware", None),
+    "mass_file_change":        ("대량 파일 암호화 의심",    "Ransomware", None),
+    "git_spawned_unusual":     ("git 설정으로 실행",        "Injection", "COMMANDINJECTION → OTHER"),
+    "package_install_exec":    ("공급망 · 설치 스크립트",   "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "agent_secret_access":     ("AI 도구 토큰 탈취",        "Password",  None),
 }
 
 
@@ -106,6 +118,18 @@ RULE_INFO = {
     "dev_tool_exposed":        ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "MEDIUM", "AI 개발 도구 포트가 외부에서 접속 가능하게 열림 (127.0.0.1 아님)"),
     "local_agent_command":     ("PC 안의 AI 도구 (외부 침입 아님 · 기록용)", "LOW", "내가 쓰는 AI 도구(Claude Code 등)가 기계 형식 명령 실행 (기록만)"),
     "baseline_anomaly":        ("평소 패턴 (확인 필요 · 기록용)", "MEDIUM", "평소 패턴 학습(7일) 뒤, 처음 보는 프로그램 조합·실행 폴더·통신 포트가 10분 안에 3개 이상"),
+    # ---- v1.1 (2026-10-21) ----
+    "webshell_file_created":   ("웹 서버 공격 (금융권 유형)", "HIGH/MEDIUM", "웹 서버·셸이 웹 폴더에 .aspx·.jsp·.php 등을 새로 만듦 (Sysmon 11). 만든 프로그램을 모르면(폴링) MEDIUM"),
+    "object_enumeration":      ("웹 서버 공격 (금융권 유형)", "HIGH", "웹 로그: 한 IP 가 같은 주소에 값(고객번호 등)만 바꾼 요청을 60초 안에 30가지 이상"),
+    "log_theft":               ("웹 서버 공격 (금융권 유형)", "HIGH", "웹 서버 프로세스 아래에서 로그 폴더를 압축·복사"),
+    "llm_malware_pattern":     ("LLM 을 부르는 악성코드", "HIGH", "wscript·cscript·mshta·Office(또는 그 자식)가 LLM API 접속, PowerShell 스크립트에서 LLM API 호출"),
+    "llm_then_exec":           ("LLM 을 부르는 악성코드", "HIGH", "LLM API 에 접속한 프로그램이 15초 안에 셸·정찰 명령 실행 (내 AI 도구는 제외)"),
+    "autorun_change":          ("지속 · 랜섬웨어 · 공급망", "HIGH/MEDIUM", "Run 키·시작프로그램에 스크립트·Temp·Public 을 가리키는 항목, 또는 셸·스크립트가 등록"),
+    "ransomware_prep":         ("지속 · 랜섬웨어 · 공급망", "HIGH", "백업·복구 수단 삭제 (vssadmin delete shadows · wbadmin delete · bcdedit recoveryenabled no)"),
+    "mass_file_change":        ("지속 · 랜섬웨어 · 공급망", "HIGH", "한 프로그램이 1분 안에 사용자 폴더에 문서 뒤에 낯선 확장자를 붙인 파일(report.docx.lock 등)을 50개 이상 생성 (Sysmon 11)"),
+    "git_spawned_unusual":     ("AI 코딩 도구 공격", "HIGH/MEDIUM", "git 이 cmd·powershell·스크립트 호스트를 실행 (GitSpawn: .git/config 로 실행). 훅(sh) 경유면 MEDIUM"),
+    "package_install_exec":    ("지속 · 랜섬웨어 · 공급망", "HIGH", "npm·pip 설치 중 실행된 명령에 다운로드·인코딩(curl·iwr·-enc·certutil -urlcache)"),
+    "agent_secret_access":     ("AI 코딩 도구 공격", "HIGH", "AI 도구가 아닌 프로그램이 Claude·Cursor·Codex 토큰·MCP 설정을 읽거나 복사 (명령줄 · 4663)"),
 }
 
 # ================= 규칙 묶음 (webui · responder · ip_check · llm 가 같이 씀) =================
@@ -116,18 +140,25 @@ INTRUSION_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "reco
                    "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound",
                    "artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domain_query",
                    "agent_command_style", "retry_loop", "credential_dump", "privilege_escalation",
-                   "payload_staging", "distributed_ips", "dev_tool_inbound"}
+                   "payload_staging", "distributed_ips", "dev_tool_inbound",
+                   "webshell_file_created", "object_enumeration", "log_theft", "llm_malware_pattern",
+                   "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change", "git_spawned_unusual",
+                   "package_install_exec", "agent_secret_access"}
 # AI 해킹 도구 쪽 사건으로 보는 규칙
 AI_ATTACK_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
                    "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound",
                    "artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domain_query",
                    "agent_command_style", "retry_loop", "credential_dump", "privilege_escalation",
-                   "payload_staging", "distributed_ips", "dev_tool_inbound"}
+                   "payload_staging", "distributed_ips", "dev_tool_inbound",
+                   "webshell_file_created", "object_enumeration", "log_theft", "llm_malware_pattern",
+                   "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change", "git_spawned_unusual",
+                   "package_install_exec", "agent_secret_access"}
 # 자동 대응: IP 차단 / 프로세스 종료
 BLOCK_RULES = {"ioc_ip_match", "port_scan", "brute_force", "remote_rdp_logon", "threat_feed_match",
-               "lolbin_outbound", "artex_user_agent", "distributed_ips", "dev_tool_inbound"}
+               "lolbin_outbound", "artex_user_agent", "distributed_ips", "dev_tool_inbound", "object_enumeration"}
 KILL_RULES = {"webserver_spawned_shell", "credential_dump", "privilege_escalation", "payload_staging",
-              "artex_host_artifact"}
+              "artex_host_artifact", "log_theft", "llm_malware_pattern", "llm_then_exec", "ransomware_prep",
+              "mass_file_change", "git_spawned_unusual", "package_install_exec", "agent_secret_access"}
 
 
 def classify(rule):

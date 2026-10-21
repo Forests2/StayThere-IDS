@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg)
-![Rules 39](https://img.shields.io/badge/detection%20rules-39-red.svg)
+![Rules 50](https://img.shields.io/badge/detection%20rules-50-red.svg)
 
 **[English summary below](#english-summary)**
 
@@ -15,6 +15,16 @@
 ![실시간 감시 — AI 해킹 도구 침입 경보](docs/images/02_ai_alert.png)
 
 ## 📌 업데이트 내역
+
+### 2026-10-21 — v1.1 · 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 (탐지 규칙 39 → 50개)
+- **금융권 공격 유형** — 웹 폴더에 웹쉘 파일 생성(`webshell_file_created`), 고객번호 등 값만 바꾼 대량 조회(`object_enumeration`), 웹 서버 아래 로그 폴더 압축·복사(`log_theft`)
+- **LLM 을 부르는 악성코드** (PROMPTSTEAL · PROMPTFLUX 방식) — 스크립트 호스트·Office 의 LLM API 접속(`llm_malware_pattern`), LLM 접속 직후 명령 실행(`llm_then_exec`), 자동 실행 등록(`autorun_change`), PowerShell 스크립트 블록(4104) 검사
+- **AI 코딩 도구 공격** — git 설정을 통한 실행(GitSpawn, `git_spawned_unusual`), AI 도구 토큰·MCP 설정 탈취(`agent_secret_access`, 4663 감사 `enable_secret_audit.ps1`)
+- **랜섬웨어 · 공급망** — 백업·복구 수단 삭제(`ransomware_prep`), 문서 대량 암호화 흔적(`mass_file_change`), npm·pip 설치 중 다운로드(`package_install_exec`)
+- **수집** — Sysmon 11·12·13(파일·레지스트리) 추가, Sysmon 이 없으면 Run 키·시작프로그램·웹 폴더를 30초마다 비교, IIS 로그의 쿼리 문자열까지 읽음
+- **알림 외부 전송** — 침입 알림을 syslog(Logpresso 등)·웹훅으로 보냄 (`notify`, 기본 꺼짐)
+- **대시보드** — 센서 9개(웹 서버 · 악성코드·랜섬웨어 추가), 「웹 침투 테스트」·「LLM 악성코드 테스트」 버튼, 사건 종류별 표시(ARTEX 계열 / LLM 을 부르는 악성코드 / AI 에이전트)
+- 근거 자료: [docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md) · [docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md) · 변경 내용: [CHANGELOG.md](CHANGELOG.md)
 
 ### 2026-10-19 — ARTEX 한국어판 · AI 에이전트 행동 탐지 · 평소 패턴 학습 (탐지 규칙 25 → 39개)
 - **ARTEX 원본·한국어판(`artex-ko`) 탐지** — 실행 파일·콘솔 흔적(`artex`, `artex_token`, `autumn27/artex`), 웹 로그의 정찰 User-Agent(`artex-enrich/1.0`, `spa-api-recon`)
@@ -37,9 +47,10 @@
 **StayThere-IDS (DDS)** is a Windows endpoint agent that detects **who broke into a PC and which program — including AI-driven hacking tools — did what**, and blocks confirmed intrusions immediately.
 It was built after the **ARTEX** campaign (Sep–Oct 2026), where an LLM-driven autonomous pentest tool was used against South Korean financial institutions.
 
-- **39 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
+- **50 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
 - **ARTEX (original & Korean fork `artex-ko`)** — host artifacts (`artex`, `artex_token`, `autumn27/artex`), recon User-Agents in web-server logs (`artex-enrich/1.0`, `spa-api-recon`)
 - **AI-agent behavior** — machine-parsable command style (`echo ---`, `head`, `2>nul`), fail-fix-retry loops, credential dumping (SAM/LSASS), Potato-style privilege escalation, payload staging (certutil decode, chunk joining, execution from Public/Temp), IP rotation, exposed AI dev tools (Jupyter/Ollama)
+- **v1.1 (2026-10-21)** — web-shell file drops, customer-ID enumeration in web logs, log theft (the 2026 Korean bank attack patterns); LLM-querying malware (PROMPTSTEAL/PROMPTFLUX style: script hosts or Office calling LLM APIs, commands right after an LLM call, autorun changes, PowerShell 4104); GitSpawn-style git execution; AI-tool token/MCP-config theft; ransomware prep (shadow-copy deletion, mass `*.docx.xxx` files); malicious install scripts; syslog/webhook alert forwarding
 - **"Is this an AI attack program?"** — machine-speed evidence (median step gap, duration) + AI evidence (direct IOCs vs. behavioral traits), calibrated on public 2026 AI-agent intrusion cases
 - **Collection** — psutil (2 s), Security events 4624–4732 and **4688 with command line**, **Sysmon 1/3/22** if installed, IIS/nginx/Apache logs if present, plus a **per-PC baseline** of normal behavior (pure Python)
 - **Response** — auto firewall block (`netsh`) and process kill for confirmed intrusions (off by default; never internal/trusted IPs), one-click emergency isolation with snapshot restore
@@ -120,9 +131,12 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **긴급 차단 / 해제** | 버튼 하나로 PC 네트워크 전체 격리(들어옴·나감 차단) + 공격 프로세스 종료 + 증거 저장. 해제 버튼 · `emergency_release.bat` 로 격리 전 방화벽 정책 복구 |
 | **외부 IP 조사** | IP 하나를 넣으면 ARTEX IP 여부 · 지금 연결 · 탐지 기록 · 로그인 시도 · 차단 여부를 한 번에 보고, 그 IP 가 채워진 CMD 명령어를 줌 (`check_ip.bat` 로 CMD 에서도 가능) |
 | **공격 분류** | 탐지 규칙마다 AIPFL-IDS 데이터셋 라벨(NF-ToN-IoT-V2 / CICIoT2023)을 붙여 「Scanning → Injection → Backdoor」 처럼 공격 단계를 보여줌 |
-| **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시 |
+| **웹 서버 공격 (v1.1)** | 웹 폴더에 웹쉘 파일 생성 · 고객번호 등 값만 바꾼 대량 조회 · 웹 서버 아래 로그 압축·복사 — 2026 금융권 공격 유형 |
+| **LLM 을 부르는 악성코드 (v1.1)** | 스크립트 호스트·Office 의 LLM API 접속, LLM 접속 직후 명령 실행, Run 키·시작프로그램 등록, PowerShell 스크립트 블록(4104) 검사 |
+| **랜섬웨어 · 공급망 · AI 코딩 도구 (v1.1)** | 백업·복구 수단 삭제, 문서 대량 암호화 흔적, npm·pip 설치 중 다운로드, git 설정을 통한 실행(GitSpawn), AI 도구 토큰·MCP 설정 탈취 |
+| **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시. **syslog(Logpresso 등)·웹훅으로 PC 밖에도 전송 가능** (v1.1, 기본 꺼짐) |
 
-전체 탐지 규칙 39개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
+전체 탐지 규칙 50개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
 
 ---
 
@@ -146,6 +160,10 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 |---|---|
 | ![침입 기록](docs/images/07_history.png) | ![규칙 리포트](docs/images/09_rules.png) |
 
+| 웹 침투 테스트 (v1.1) | LLM 악성코드 테스트 (v1.1) |
+|---|---|
+| ![웹 침투](docs/images/13_web_attack_alert.png) | ![LLM 악성코드](docs/images/14_llm_malware_alert.png) |
+
 | 조치 가이드 | 긴급 차단 중 |
 |---|---|
 | ![조치 가이드](docs/images/10_guide.png) | ![긴급 차단](docs/images/11_emergency.png) |
@@ -160,8 +178,8 @@ flowchart LR
     C1["프로세스<br/>(psutil)"] --> M
     C2["네트워크 연결<br/>(psutil)"] --> M
     C3["로그인 · 명령줄 기록<br/>(Security 4624~4732 · 4688)"] --> M
-    C4["Sysmon 1·22 · 웹 서버 로그<br/>(있을 때)"] --> M
-    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 39개"]
+    C4["Sysmon 1·3·11·12·13·22 · PowerShell 4104<br/>웹 서버 로그 (있을 때)"] --> M
+    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 50개"]
     D --> DB[("dds.db<br/>SQLite")]
     D --> R["responder.py<br/>알림 · 자동 차단 · 긴급 격리"]
     R --> FW["Windows 방화벽<br/>(netsh)"]
@@ -212,7 +230,7 @@ python -m pip install -r requirements.txt --index-url <사내 PyPI 주소> --tru
 ```
 
 ### 동작 확인 (시뮬레이션)
-대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트 / AI 에이전트 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
+대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트 / AI 에이전트 테스트 / 웹 침투 테스트 / LLM 악성코드 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
 
 화면 없이 규칙만 확인:
 ```bat
@@ -224,9 +242,11 @@ python test_artex_sim.py
 |---|---|
 | `check_ip.bat` / `python ip_check.py <IP>` | 외부 IP 조사 (DDS 가 꺼져 있어도 동작) |
 | `emergency_release.bat` | 대시보드가 안 열릴 때 긴급 차단 해제. `--all-ip` 를 붙이면 DDS 가 넣은 IP 차단 규칙도 전부 삭제 |
-| `enable_cmdline_audit.bat` | **처음 한 번 실행 권장.** 보안 이벤트 4688 에 명령줄이 남게 켬 → 2초 사이에 생겼다 사라진 명령(AI 에이전트가 자주 씀)까지 잡음. 끄기: `enable_cmdline_audit.bat off` |
+| `enable_cmdline_audit.bat` | **처음 한 번 실행 권장.** 보안 이벤트 4688 에 명령줄이 남게 켜고(2초 사이에 생겼다 사라진 명령까지 잡음), PowerShell 스크립트 블록 기록(4104)도 켬. 끄기: `enable_cmdline_audit.bat off` |
+| `enable_secret_audit.ps1` | (선택) AI 도구 토큰·MCP 설정 파일을 **읽으면 기록**(4663)하게 켬 → 인포스틸러가 읽어 가면 `agent_secret_access`. 관리자 PowerShell 에서 `powershell -ExecutionPolicy Bypass -File enable_secret_audit.ps1` (끄기: `-Off`) |
+| `python tools/gen_rules_doc.py` | 규칙을 바꾼 뒤 `docs/DETECTION_RULES.md` 다시 만들기 |
 
-**Sysmon (선택):** [Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) 이 설치돼 있으면 DDS 가 자동으로 이벤트 1(프로세스 생성)·3(네트워크 연결)·22(DNS 조회)를 읽습니다. psutil 이 2초마다 보는 연결과 겹치면 한 번만 처리합니다. DNS 조회까지 보이므로 공격 중계 도메인(`xcai.pro` 등)을 어떤 프로그램이 찾았는지 잡을 수 있습니다. Windows 11 은 2026년 2월부터 Insider 빌드에서 Sysmon 기본 탑재를 시험 중입니다(`Dism /Online /Enable-Feature /FeatureName:Sysmon` → `sysmon -i`). 시작할 때 검은 창에 `수집: … 명령줄(4688) 켜짐 · Sysmon 켜짐` 처럼 무엇을 읽는지 표시됩니다.
+**Sysmon (선택):** [Sysinternals Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) 이 설치돼 있으면 DDS 가 자동으로 이벤트 1(프로세스 생성)·3(네트워크 연결)·11(파일 생성)·12·13(레지스트리)·22(DNS 조회)를 읽습니다. 웹쉘 파일 생성을 만든 프로그램까지 알 수 있고, 문서 대량 암호화 흔적은 Sysmon 이 있어야 잡힙니다. Sysmon 이 없으면 Run 키·시작프로그램 폴더·웹 폴더를 30초마다 비교해 보완합니다. psutil 이 2초마다 보는 연결과 겹치면 한 번만 처리합니다. DNS 조회까지 보이므로 공격 중계 도메인(`xcai.pro` 등)을 어떤 프로그램이 찾았는지 잡을 수 있습니다. Windows 11 은 2026년 2월부터 Insider 빌드에서 Sysmon 기본 탑재를 시험 중입니다(`Dism /Online /Enable-Feature /FeatureName:Sysmon` → `sysmon -i`). 시작할 때 검은 창에 `수집: … 명령줄(4688) 켜짐 · Sysmon 켜짐` 처럼 무엇을 읽는지 표시됩니다.
 
 ---
 
@@ -248,7 +268,7 @@ DDS/
 ├─ dds_agent.py          실행 진입점 (감시 시작 + 대시보드 서버)
 ├─ monitor.py            수집 루프 · 침입 시뮬레이션 시나리오 4종
 ├─ collectors.py         프로세스 · 네트워크 · 로그인 기록 · 4688 명령줄 · Sysmon · 웹 로그 수집
-├─ detectors.py          탐지 규칙 39개 (+ 위협 목록 파일 대조)
+├─ detectors.py          탐지 규칙 50개 (+ 위협 목록 파일 대조)
 ├─ attack_taxonomy.py    규칙 설명 · AIPFL-IDS 공격 분류 연결표
 ├─ responder.py          알림 · 자동 대응 · 방화벽 차단/해제 · 긴급 격리
 ├─ llm.py                AI 분석관 (API · GGUF 동시 실행, 폴더 감시, 진행 상황)
@@ -257,14 +277,15 @@ DDS/
 ├─ storage.py            SQLite 저장소
 ├─ ip_check.py           외부 IP 조사 (CMD 겸용)
 ├─ emergency_release.py  긴급 차단 비상 해제
-├─ test_artex_sim.py     규칙 테스트 (ARTEX · 실제 사례형 AI 에이전트 · 한국어판 · 오탐 · 파서)
+├─ test_artex_sim.py     규칙 테스트 (시나리오 A~I: ARTEX · AI 에이전트 · 한국어판 · 웹 침투 · LLM 악성코드 · AI 코딩 도구 · 오탐 · 파서)
+├─ tools/                규칙 문서 자동 생성 (gen_rules_doc.py)
 ├─ config.json           탐지 기준 · ARTEX IOC · 감시 목록
 ├─ static/               대시보드 화면 (index.html, A1_D.jpg)
 ├─ GGUF/                 ← .gguf 모델을 넣는 곳 (저장소에는 안 올라감)
 ├─ threat_feeds/         ← 위협 IP·CIDR 목록 .txt (예시 + ARTEX 관련 대역만 올라감)
 ├─ ml/                   NF-ToN-IoT-V2 학습 스크립트 (AIPFL-IDS 전처리 참고)
 ├─ docs/                 규칙 목록 · AI 분석관 설명 · 최신 위협 정보 정리 · 화면 캡처
-├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat
+├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat · enable_secret_audit.ps1
 ├─ CHANGELOG.md          변경 기록
 ├─ LICENSE               MIT 라이선스
 └─ requirements.txt · requirements-ai.txt
@@ -293,6 +314,10 @@ DDS/
 | `credential_dump_patterns` · `privesc_tools` · `staging_patterns` · `staging_dirs` | 계정 탈취 · 권한 상승 · 파일 반입 패턴 |
 | `distributed_ips` · `dev_tool_ports` · `web_log_dirs` · `sysmon` | 분산 IP · AI 개발 도구 포트 · 웹 로그 폴더 · Sysmon 사용 |
 | `baseline` | 평소 패턴 학습 (`learn_days` 7일 · `min_events` 3,000건 · `window_sec` 600초 안에 `burst` 3가지) |
+| `web_root_dirs` · `enum_burst` · `log_markers` | 웹 폴더 · 대량 조회 기준(60초 · 30가지) · 로그 탈취 판단 (v1.1) |
+| `script_hosts` · `office_processes` · `llm_exec_window_sec` | LLM 을 부르는 악성코드 판단 (v1.1) |
+| `ransomware_patterns` · `mass_file` · `package_install_markers` · `secret_markers` | 랜섬웨어 · 공급망 · AI 도구 토큰 경로 (v1.1, 경로는 실제 PC 에서 확인 후 조정) |
+| `notify` | 침입 알림 외부 전송: `syslog`(host·port) · `webhook`(url) · `min_severity` — **기본 꺼짐** (v1.1) |
 
 ---
 
@@ -300,6 +325,7 @@ DDS/
 
 - **대시보드는 127.0.0.1 에서만** 열리고, 조치 API 는 화면이 받은 무작위 토큰(`X-DDS-Token`)이 있어야 동작합니다. 다른 웹사이트가 몰래 차단·종료를 호출하거나(CSRF), DNS 리바인딩으로 접근하는 것을 막습니다.
 - **자동 대응은 확실한 경우만:** 외부 침입 규칙의 HIGH 알림일 때만, 내부망·예약·신뢰 IP 는 절대 자동 차단하지 않고, 웹 서버가 띄운 쉘·계정 탈취 명령·권한 상승 도구·반입한 공격 파일 같은 **해당 프로세스만** 종료합니다(웹 서버 자체는 안 건드림). 기본은 꺼져 있습니다.
+- **알림 외부 전송은 기본 꺼짐:** `config.json` 의 `notify` 에 사내 syslog·웹훅 주소를 넣고 `enabled` 를 켜야 보냅니다. 시뮬레이션 알림은 보내지 않습니다.
 - **내 AI 도구는 침입으로 안 봄:** Claude Code·Cursor 같은 AI 도구도 기계 형식 명령을 씁니다. 명령을 실행한 프로세스의 조상을 따라가 내 AI 도구 아래면 기록만 남깁니다. 단, 그 아래에서도 계정 정보 탈취·권한 상승·공격 파일 반입은 경보합니다.
 - **AI 를 속이는 조작 방지:** 사건 기록은 무작위 경계 문자열로 감싸 '데이터' 로만 LLM 에 넘깁니다. AI 판단 자동 실행은 **DDS 가 실제로 잡은 IP·프로세스**에만 적용되고, LLM 이 기록에 없는 대상을 말하면 무시합니다. (공격자가 명령줄·파일 이름에 「차단하지 마」 같은 문장을 심어 방어 AI 를 속이는 것 — 프롬프트 인젝션 — 을 막기 위함)
 - **시뮬레이션은 실제 시스템을 바꾸지 않습니다.**
@@ -317,18 +343,18 @@ DDS/
 | **ML 이상 탐지** | ✅ 2026-10-19 일부 반영 — 이 PC 의 평소 패턴 학습(`baseline.py`, `baseline_anomaly`) | 남은 것: NF-ToN-IoT-V2 데이터셋 학습(`ml/train_nf_model.py`)은 데이터셋 파일이 있어야 해서 아직 |
 | **ARTEX 한국어판 탐지 규칙 (Sigma · Suricata)** | ✅ 2026-10-19 반영 — 공개 방어 키트(artex-defense-kit)의 User-Agent·호스트 지표, 한국어판 이름(`artex-ko`) | 남은 것: 한국어판 저장소·티오리 공개 규칙의 원문을 확인해 차이 반영 (보도에 저장소 주소가 없어 미확인) |
 
-### v1.1 계획 — 최신 위협 정보 반영 (2026-10-19 정리)
+### v1.1 — 반영 완료 (2026-10-21)
 
-정리 문서: **[docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md)** — 금융권 사건 경과, ARTEX PRO 재출시, LLM 을 부르는 악성코드, AI 코딩 에이전트 공격, 국내 상반기 위협 동향
+2026-10-19 에 정리한 계획([docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md))을 모두 반영했습니다 — 웹쉘 파일 생성 · 고객번호 열거 · 로그 탈취 · LLM 을 부르는 악성코드 · Run 키 · PowerShell 4104 · AI 도구 토큰 보호 · GitSpawn · 랜섬웨어 준비 · 대량 파일 암호화 · 설치 스크립트 · 알림 외부 전송. 10/20~21 새 자료는 [docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md).
 
-| 순위 | 추가할 것 | 근거 |
-|---|---|---|
-| 1 | **웹쉘 파일 생성 감지** — 웹 서버가 웹 폴더에 .aspx·.jsp·.php 를 새로 만들면 경보 | 금융권 공격 유형 ③ (취약점 → 웹쉘 → 로그 탈취) |
-| 1 | **고객번호 열거 · 대량 조회 감지** — 웹 로그에서 값만 바꾼 요청이 몰리면 경보 | 금융권 공격 유형 ① (무작위 값 반복 조회) |
-| 2 | **LLM 을 부르는 악성코드** — 스크립트 호스트·Office 의 LLM 접속, LLM 응답 직후 명령 실행, 시작프로그램·Run 키 변경, PowerShell 4104 수집 | PROMPTSTEAL · PROMPTFLUX (Google GTIG) |
-| 3 | **AI 도구 토큰 · MCP 설정 보호**, **git 설정을 통한 실행 감지** | 인포스틸러(Remus 등), GitSpawn |
-| 4 | **랜섬웨어 준비 행위**(백업·복구 수단 삭제, 대량 파일 변경), **패키지 설치 스크립트 감시** | 안랩 2026 상반기 동향 |
-| 5 | **알림 · 기록 외부 전송**(Logpresso · syslog · 메일), **ARTEX PRO 지표**(도메인 공개 시) | 에이전트 로그 삭제 사례, 10/16 재출시 보도 |
+### v1.2 후보
+| 항목 | 이유 |
+|---|---|
+| **Windows 실제 PC 검증** | 4688·4104·4663·Sysmon 읽기, netsh 차단·해제, 긴급 격리, 알림 전송을 실제 Windows 에서 확인 (지금까지는 시뮬레이션) |
+| **오탐 조정** | 며칠 운영한 기록으로 기준값 조정, AI 도구 토큰 경로(`secret_markers`) 실제 확인 |
+| **ARTEX PRO · RedAgents 지표** | 10/16 발표된 상용 플랫폼의 접속 주소·출발지 정보가 공개되면 반영 |
+| **ARTEX 한국어판 규칙 원문 대조 · NF-ToN-IoT-V2 학습** | 저장소 주소 · 데이터셋 파일 확보 후 |
+| **여러 PC 모아 보기 · 대시보드 영어** | 여러 대 설치 시 한 화면에서 보기, 해외 사용자용 |
 
 ### 한계
 - **실기 검증 진행 중:** 개발은 Linux 환경에서 시뮬레이션으로 검증했습니다. Windows 실기(로그인 기록 파싱, netsh 차단, 알림, 긴급 격리)는 검증 중입니다.
@@ -339,13 +365,23 @@ DDS/
 - **명령줄 기록을 켜야 제 성능:** `enable_cmdline_audit.bat` 를 안 켜면 2초 사이에 끝난 명령은 놓칠 수 있습니다.
 - **ARTEX User-Agent 는 웹 서버가 있는 PC만:** 일반 PC 는 HTTP 내용을 보지 않습니다. 또 ARTEX 의 Chromium 기반 요청은 일반 브라우저 헤더를 써서 이 지표로 다 잡히지 않습니다(방어 키트도 같은 한계를 밝힘).
 - **평소 패턴 학습은 처음 7일 동안 알림 없음:** 학습 기간 중에 이미 침입이 있었다면 그것도 '평소' 로 배웁니다. 그래서 이상 탐지는 빨간 경보가 아니라 「확인 필요」 기록으로만 남깁니다.
+- **LLM 접속 직후 명령 실행(`llm_then_exec`)은 내가 만든 AI 에이전트도 걸릴 수 있음:** 직접 만든 에이전트가 클라우드 LLM API 를 부르고 셸을 실행한다면 「AI 도구 탐지 → 허용 목록」 에 그 프로그램을 넣으세요. (Claude Code 같은 등록된 AI 도구는 자동 제외)
+- **문서 대량 암호화 흔적은 Sysmon 이 있어야:** 파일 생성 기록(Sysmon 11)이 없으면 `mass_file_change` 는 동작하지 않고, 백업 삭제(`ransomware_prep`)로만 잡습니다.
 - **AI 에이전트식 명령은 '행동 근거':** 사람이 만든 자동화 스크립트도 비슷할 수 있어, 외부 유입 흔적과 함께 볼 때 의미가 큽니다.
 
 ---
 
 ## 참고 자료와 출처
 
-> 자료 확인일: **2026-10-14** (첫 공개) · **2026-10-19** (ARTEX 한국어판 · AI 에이전트 행동 반영, 최신 위협 정보 정리)
+> 자료 확인일: **2026-10-14** (첫 공개) · **2026-10-19** (ARTEX 한국어판 · AI 에이전트 행동 반영, 최신 위협 정보 정리) · **2026-10-21** (v1.1 반영, 10/20~21 추가 자료)
+
+### 2026-10-21 추가 — v1.1 반영 · 새 자료
+정리 문서: [docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md)
+- **Seoul Economic Daily** (2026-10-20) — ARTEX 가 일본 기업 공격에도 쓰인 정황 (요미우리·NHK 인용, 9/18~10/18 · 약 80곳 표적) https://en.sedaily.com/international/2026/10/20/chinese-ai-hacking-tool-used-on-korean-banks-also-hit
+- **GBHackers** (2026-10-20) — ThreatBook RedAgents 플랫폼 (Artex Pro · CyberStrikeAI 포함, 10/16 발표) https://gbhackers.com/redagents-ai-platform/ → `artex_host_keywords` 에 `cyberstrikeai` 추가
+- **SecurityWeek** (2026-10-19) — MITRE ATT&CK v20 이 AI 악용 기법(프롬프트 인젝션 · 조직 AI 에이전트 악용 · IDE·코딩 에이전트 설정 파일 침해) 추가 https://www.securityweek.com/mitre-attck-v20-catalogs-ai-abuse-mfa-bypass-water-utility-attacks/
+- **세계일보** (2026-10-20) — 경찰, 금융권 AI 해킹을 중대범죄로 판단 · 중수청 통보 https://www.segye.com/newsView/20261020521235
+
 
 ### 2026-10-19 추가 — 다음 업데이트(v1.1) 준비 자료
 정리 문서: [docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md)

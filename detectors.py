@@ -33,6 +33,18 @@
   distributed_ips          여러 외부 IP가 같은 위험 포트로           HIGH
   dev_tool_inbound         외부 IP → Jupyter/Ollama 등 포트          HIGH
   dev_tool_exposed         AI 개발 도구 포트가 외부에 열림            MEDIUM (기록)
+ [v1.1 · 2026-10-21 — 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 에이전트 공격 · 랜섬웨어 · 공급망]
+  webshell_file_created    웹 서버가 웹 폴더에 스크립트 파일 생성     HIGH (만든 프로그램 모르면 MEDIUM)
+  object_enumeration       웹 로그: 값만 바꾼 요청이 몰림(고객번호 열거) HIGH   (on_weblog)
+  log_theft                웹 서버 아래에서 로그 폴더 압축·복사        HIGH
+  llm_malware_pattern      스크립트 호스트·Office 가 LLM API 접속      HIGH
+  llm_then_exec            LLM API 접속 직후 같은 프로그램이 셸 실행    HIGH
+  autorun_change           Run 키 · 시작프로그램에 수상한 항목 추가     MEDIUM/HIGH
+  ransomware_prep          백업·복구 수단 삭제 (vssadmin · wbadmin · bcdedit) HIGH
+  mass_file_change         한 프로그램이 1분 안에 문서 뒤에 낯선 확장자를 붙인 파일 대량 생성 HIGH
+  git_spawned_unusual      git 이 셸·스크립트 호스트를 실행 (GitSpawn)  HIGH (훅 경유 MEDIUM)
+  package_install_exec     npm·pip 설치 중 다운로드·인코딩 명령         HIGH
+  agent_secret_access      AI 도구가 아닌 프로그램이 AI 토큰·MCP 설정 접근 HIGH
 """
 import difflib
 import ipaddress
@@ -105,6 +117,28 @@ class RuleDetector:
         self.cmd_window = deque()              # (시각, 정규화 명령줄) 재시도 판단용
         self.dist_window = defaultdict(deque)  # 로컬 포트 → (시각, 외부 IP)
         self.js_window = defaultdict(deque)    # 웹 로그 출발지 IP → (시각, 경로)
+        # --- v1.1 ---
+        L = lambda k: [x.lower() for x in cfg.get(k, [])]
+        self.web_markers, self.web_ext = L("web_root_markers"), tuple(L("web_script_ext"))
+        self.enum_cfg = cfg.get("enum_burst", {"distinct": 30, "window_sec": 60})
+        self.static_ext = tuple(L("static_ext"))
+        self.log_markers, self.archive_markers = L("log_markers"), L("archive_markers")
+        self.script_hosts, self.office = set(L("script_hosts")), set(L("office_processes"))
+        self.llm_window = cfg.get("llm_exec_window_sec", 15)
+        self.autorun_markers, self.sus_autorun = L("autorun_markers"), L("suspicious_autorun_values")
+        self.ransom_pat = L("ransomware_patterns")
+        self.mass_cfg = cfg.get("mass_file", {"files": 100, "window_sec": 60, "share": 0.6})
+        self.common_ext = set(L("common_ext"))
+        self.doc_ext = set(L("doc_ext"))
+        self.pkg_markers, self.dl_markers = L("package_install_markers"), L("download_markers")
+        self.git_sus = set(L("git_suspicious_children"))
+        self.secret_markers, self.secret_allow = L("secret_markers"), set(L("secret_readers_allow"))
+        self.exfil_verbs = L("exfil_verbs")
+        self.ai_domains_l = [d.lower() for d in cfg.get("ai_api_domains", [])]
+        self.proc_cache = {}                   # pid → {name, parent, chain(조상 이름), exe}
+        self.llm_seen = {}                     # pid → LLM API 에 접속한 시각
+        self.enum_window = defaultdict(deque)  # (IP, 정규화 경로) → (시각, 원래 경로)
+        self.file_window = defaultdict(deque)  # pid → (시각, 확장자)
 
     # ---------- 위협 목록 파일 (threat_feeds/*.txt : 한 줄에 IP 또는 CIDR, # 주석) ----------
     def load_feeds(self):
@@ -288,6 +322,7 @@ class RuleDetector:
                 self.recon_window.clear()
 
         alerts += self._process_2026(p, name, parent, cmd, now, is_shell or is_recon)
+        alerts += self._process_v11(p, name, parent, cmd, now, is_shell or is_recon)
 
         # AI 로 판정된 프로세스의 자식도 AI 로 추적 (크롬 네트워크 서비스 등은 자식 프로세스가 통신함)
         if parent_is_ai and p["pid"] not in self.ai_pids:
@@ -366,6 +401,169 @@ class RuleDetector:
                                     "samples": near[-2:] + [nc]}))
         return alerts
 
+    # ================= v1.1 — 프로세스 =================
+    def _chain(self, p):
+        """[이름, 부모, 조부모…] (소문자)"""
+        out = [(p.get("name") or "").lower(), (p.get("parent") or "").lower()]
+        out += [(a.get("name") or "").lower() for a in p.get("ancestors") or []]
+        return [x for x in out if x]
+
+    def _process_v11(self, p, name, parent, cmd, now, shellish):
+        alerts = []
+        chain = self._chain(p)
+        anc_cmds = " ".join((a.get("cmdline") or "").lower() for a in p.get("ancestors") or [])
+        exe = (p.get("exe") or "").lower()
+        local_ai = self.local_ai_tree(p)
+        self.proc_cache[p.get("pid")] = {"name": name, "parent": parent, "chain": chain, "exe": exe}
+        if len(self.proc_cache) > 20000:
+            self.proc_cache = dict(list(self.proc_cache.items())[-10000:])
+        shell_like = shellish or name in self.shells or name in self.lolbins or name in self.script_hosts
+
+        # --- 랜섬웨어 준비: 백업·복구 수단 삭제 ---
+        hit = [x for x in self.ransom_pat if x in cmd]
+        if hit:
+            alerts.append(("HIGH", "ransomware_prep", f"{parent} → {name}", {**p, "patterns": hit}))
+
+        # --- 웹 서버 아래에서 로그 폴더 압축·복사 (금융권 공격 유형 ③) ---
+        under_web = any(x in self.web_procs for x in chain[1:])
+        if under_web and any(m in cmd for m in self.log_markers) and any(a in cmd for a in self.archive_markers):
+            alerts.append(("HIGH", "log_theft", f"{parent} → {name}", {**p, "web_parent": next(x for x in chain[1:] if x in self.web_procs)}))
+
+        # --- LLM 접속 직후 같은 프로그램(또는 그 조상)이 셸 실행 (PROMPTSTEAL 방식) ---
+        if shell_like and not local_ai and self.llm_seen:
+            pids = [p.get("ppid")] + [a.get("pid") for a in p.get("ancestors") or []]
+            src = next((x for x in pids if x in self.llm_seen and (now - self.llm_seen[x]).total_seconds() <= self.llm_window), None)
+            if src is not None:
+                info = self.proc_cache.get(src, {})
+                alerts.append(("HIGH", "llm_then_exec", f"{info.get('name') or src} → {name}",
+                               {**p, "llm_pid": src, "llm_process": info.get("name"),
+                                "after_sec": round((now - self.llm_seen[src]).total_seconds(), 1)}))
+
+        # --- git 이 셸·스크립트 호스트 실행 (GitSpawn: .git/config 로 실행) — 내 AI 도구 아래여도 경보 ---
+        if parent == "git.exe" and (name in self.git_sus or any(d in exe for d in self.staging_dirs)):
+            alerts.append(("HIGH", "git_spawned_unusual", f"git.exe → {name}", p))
+        elif parent in ("sh.exe", "bash.exe") and "git.exe" in chain[2:4] and name in self.git_sus:
+            alerts.append(("MEDIUM", "git_spawned_unusual", f"git → {parent} → {name}", {**p, "via_hook": True}))
+
+        # --- 패키지 설치 중 다운로드·인코딩 명령 (공급망) ---
+        if any(m in anc_cmds for m in self.pkg_markers) and any(m in cmd for m in self.dl_markers):
+            alerts.append(("HIGH", "package_install_exec", f"{parent} → {name}",
+                           {**p, "installer": next(m for m in self.pkg_markers if m in anc_cmds).strip(),
+                            "markers": [m.strip() for m in self.dl_markers if m in cmd][:3]}))
+
+        # --- AI 도구 토큰 · MCP 설정을 읽어 가는 명령 (인포스틸러) ---
+        sec = [m for m in self.secret_markers if m in cmd]
+        if sec and not local_ai and name not in self.secret_allow and name not in self.ai_names \
+                and any(v in cmd for v in self.exfil_verbs):
+            alerts.append(("HIGH", "agent_secret_access", f"{parent} → {name}", {**p, "targets": sec}))
+        return alerts
+
+    # ================= v1.1 — 파일 (Sysmon 11 · 폴링) =================
+    def on_file(self, f):
+        alerts = []
+        now = self.now()
+        path = (f.get("path") or "").lower()
+        proc = (f.get("process") or "").lower()
+        exe = (f.get("exe") or "").lower()
+        # 웹쉘: 웹 폴더에 스크립트 파일
+        if path.endswith(self.web_ext) and any(m in path for m in self.web_markers):
+            creator_web = proc in self.web_procs or proc in self.shells or proc in self.script_hosts \
+                or any(d in exe for d in self.staging_dirs)
+            if creator_web:
+                alerts.append(("HIGH", "webshell_file_created", f"{f.get('process')} → {f.get('path')}", f))
+            elif not proc:          # 폴링으로 발견: 만든 프로그램을 모름
+                alerts.append(("MEDIUM", "webshell_file_created", f.get("path"), {**f, "creator": "미상"}))
+        # 시작프로그램 폴더
+        if any(m in path for m in self.autorun_markers):
+            alerts += self._autorun(f, path, proc, exe, f.get("path"))
+        # 대량 파일 생성 (랜섬웨어 암호화 흔적) — 문서 확장자 뒤에 낯선 확장자가 붙은 파일 (report.docx.lock 같은)
+        if proc and "\\users\\" in path and f.get("pid"):
+            base, ext = os.path.splitext(path)
+            inner = os.path.splitext(base)[1]
+            if inner in self.doc_ext and ext and ext not in self.common_ext and ext not in self.doc_ext:
+                q = self.file_window[f.get("pid")]
+                q.append((now, ext))
+                self._trim(q, now, self.mass_cfg["window_sec"], key=lambda x: x[0])
+                if len(q) >= self.mass_cfg["files"]:
+                    cnt = defaultdict(int)
+                    for _, e in q:
+                        cnt[e] += 1
+                    top, n = max(cnt.items(), key=lambda x: x[1])
+                    if n / len(q) >= self.mass_cfg["share"] and self._once("mass_file_change", f.get("pid"), now):
+                        alerts.append(("HIGH", "mass_file_change", f.get("process"),
+                                       {"pid": f.get("pid"), "process": f.get("process"), "exe": f.get("exe"), "ext": top,
+                                        "count": len(q), "window_sec": self.mass_cfg["window_sec"],
+                                        "sample": f.get("path")}))
+                        q.clear()
+        return alerts
+
+    # ================= v1.1 — 레지스트리 (Sysmon 12·13 · 폴링) =================
+    def on_registry(self, r):
+        key = (r.get("key") or "").lower()
+        if not any(m in key for m in self.autorun_markers):
+            return []
+        return self._autorun(r, key + " " + (r.get("value") or "").lower(), (r.get("process") or "").lower(),
+                             (r.get("exe") or "").lower(), r.get("key"))
+
+    def _autorun(self, ev, text, proc, exe, where):
+        """자동 실행 등록 — 값이 스크립트·Temp·Public 을 가리키거나, 셸·스크립트 호스트가 등록하면 경보"""
+        sus = [m for m in self.sus_autorun if m in text]
+        writer_bad = proc in self.shells or proc in self.script_hosts or proc in self.lolbins \
+            or any(d in exe for d in self.staging_dirs)
+        if not (sus or writer_bad):
+            return []
+        sev = "HIGH" if (sus and writer_bad) else "MEDIUM"
+        if not self._once("autorun_change", where, self.now(), 3600):
+            return []
+        return [(sev, "autorun_change", f"{ev.get('process') or '프로그램 미상'} → {where}",
+                 {**ev, "reasons": sus[:4] + (["셸·스크립트가 등록"] if writer_bad else [])})]
+
+    # ================= v1.1 — PowerShell 스크립트 블록 (4104) =================
+    def on_script(self, b):
+        """스크립트 내용에 계정 탈취 · 파일 반입 · 랜섬웨어 준비 · LLM API 호출이 있는지"""
+        text = (b.get("text") or "").lower()
+        alerts, now = [], self.now()
+        key = b.get("block_id") or text[:80]
+        checks = [("credential_dump", [x for x in self.cred_pat if x in text]),
+                  ("ransomware_prep", [x for x in self.ransom_pat if x in text]),
+                  ("payload_staging", [x for x in self.staging_pat if x in text and x != ".b64"]),
+                  ("llm_malware_pattern", [d for d in self.ai_domains_l if d in text]
+                   if any(w in text for w in ("invoke-webrequest", "invoke-restmethod", "iwr ", "irm ", "webclient", "httpclient"))
+                   else [])]
+        for rule, hit in checks:
+            if hit and self._once(rule, (key, rule), now):
+                alerts.append(("HIGH", rule, "PowerShell 스크립트", {**b, "text": b.get("text", "")[:500],
+                                                                    "patterns": hit[:4], "via": "4104"}))
+        return alerts
+
+    # ================= v1.1 — 파일 접근 감사 (4663) =================
+    def on_object_access(self, o):
+        obj = (o.get("object") or "").lower()
+        proc = (o.get("process") or "").lower()
+        sec = [m for m in self.secret_markers if m in obj]
+        if not sec or proc in self.secret_allow or proc in self.ai_names or proc in self.whitelist:
+            return []
+        if not self._once("agent_secret_access", (proc, obj), self.now(), 3600):
+            return []
+        return [("HIGH", "agent_secret_access", f"{o.get('process')} → {o.get('object')}", {**o, "targets": sec})]
+
+    def _llm_owner(self, pid, proc, now, ev):
+        """LLM API 에 접속한 프로그램 기록 + 스크립트 호스트 · Office 계열이면 경보 (PROMPTSTEAL · PROMPTFLUX 방식)"""
+        pl = (proc or "").lower()
+        if pl in self.browsers:
+            return []
+        if pid:
+            self.llm_seen[pid] = now
+            if len(self.llm_seen) > 5000:
+                self.llm_seen = dict(list(self.llm_seen.items())[-2000:])
+        info = self.proc_cache.get(pid, {})
+        chain = [pl] + info.get("chain", [])[1:]
+        bad = [x for x in chain if x in self.script_hosts or x in self.office]
+        if bad and self._once("llm_malware_pattern", pid or pl, now):
+            return [("HIGH", "llm_malware_pattern", f"{proc} ({' ← '.join(chain[:3])})",
+                     {**ev, "chain": chain[:5], "why": bad[0]})]
+        return []
+
     # ================= 웹 서버 로그 (웹 서버가 있는 PC) =================
     def on_weblog(self, w):
         """w = {src_ip, ua, path, status, time}"""
@@ -376,7 +574,22 @@ class RuleDetector:
             return alerts
         if ua in self.artex_ua and self._once("artex_user_agent", (ip, ua), now):
             alerts.append(("HIGH", "artex_user_agent", ip, {**w, "raddr_ip": ip}))
-        path = (w.get("path") or "").lower().split("?")[0]
+        full = (w.get("path") or "")
+        path = full.lower().split("?")[0]
+        # --- 값만 바꾼 요청이 몰림 (고객번호 열거 · 금융권 공격 유형 ①) ---
+        if not path.endswith(self.static_ext):
+            norm = re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{3,}", "#", full.lower())
+            norm = re.sub(r"=([^&]*)", lambda m: "=#" if re.search(r"\d", m.group(1)) else m.group(0), norm)
+            if "#" in norm:
+                q = self.enum_window[(ip, norm)]
+                q.append((now, full))
+                self._trim(q, now, self.enum_cfg["window_sec"], key=lambda x: x[0])
+                n = len({x[1] for x in q})
+                if n >= self.enum_cfg["distinct"] and self._once("object_enumeration", (ip, norm), now):
+                    alerts.append(("HIGH", "object_enumeration", ip,
+                                   {"raddr_ip": ip, "pattern": norm[:120], "count": n, "window_sec": self.enum_cfg["window_sec"],
+                                    "samples": [x[1] for x in list(q)[-3:]], "ua": w.get("ua")}))
+                    q.clear()
         if path.endswith(".js"):
             q = self.js_window[ip]
             q.append((now, path))
@@ -395,6 +608,9 @@ class RuleDetector:
         hit = next((d for d in self.ioc_domains if name == d or name.endswith("." + d)), None)
         if hit and self._once("ioc_domain_query", (q.get("process"), hit), self.now()):
             alerts.append(("HIGH", "ioc_domain_query", q.get("process") or "?", {**q, "ioc": hit}))
+        ai = next((d for d in self.ai_domains_l if name == d or name.endswith("." + d)), None)
+        if ai:
+            alerts += self._llm_owner(q.get("pid"), q.get("process"), self.now(), {**q, "ai_domain": ai})
         return alerts
 
     # ================= 어디와 통신했나 =================
@@ -425,6 +641,7 @@ class RuleDetector:
 
         # --- LLM API 접속 (같은 프로세스·도메인은 1시간에 한 번만) ---
         if n["kind"] == "outbound" and n.get("ai_domain"):
+            alerts += self._llm_owner(n.get("pid"), proc, now, n)
             key = (proc.lower(), n["ai_domain"])
             last = self.api_seen.get(key)
             if last is None or (now - last).total_seconds() > 3600:

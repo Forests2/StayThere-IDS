@@ -1,10 +1,10 @@
 # 탐지 규칙 목록
 
-DDS 에 들어 있는 탐지 규칙 39개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성)
+DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성 — `python tools/gen_rules_doc.py`)
 
 - **경보 화면**은 '외부 침입 흔적' 규칙(아래 ★)이 HIGH 로 걸릴 때만 뜹니다. PC 안에서 사용자가 쓰는 AI 프로그램 활동은 기록만 남깁니다.
 - **자동 대응**(켜져 있을 때): 🛡 = 출발지 IP 자동 차단, ⛔ = 해당 프로세스 자동 종료.
-- 🆕 = 2026-10-19 개선에서 추가 (ARTEX 원본·한국어판 artex-ko · 공개된 AI 에이전트 침입 사례 반영, [CHANGELOG](../CHANGELOG.md)).
+- 🆕 = 2026-10-19 추가 (ARTEX 원본·한국어판 · AI 에이전트 행동 · 평소 패턴), 🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망). 근거: [CHANGELOG](../CHANGELOG.md) · [최신 위협 정보 정리](THREAT_NOTES_2026-10-19.md)
 - **공격 분류**는 [AIPFL-IDS](https://github.com/PrathamWankhade/AIPFL-IDS) 가 쓰는 데이터셋 라벨(NF-ToN-IoT-V2 / CICIoT2023)에 맞춰 붙였습니다. 데이터셋에 해당 개념이 없는 규칙은 `-` 로 표시합니다.
 
 ## 누가 침입했나
@@ -71,6 +71,37 @@ DDS 에 들어 있는 탐지 규칙 39개입니다. (`attack_taxonomy.py` 의 `R
 |---|---|---|---|---|
 | `baseline_anomaly` 🆕 | MEDIUM | 평소 패턴 학습(7일) 뒤, 처음 보는 프로그램 조합·실행 폴더·통신 포트가 10분 안에 3개 이상 | 평소와 다른 행동 | - |
 
+## 웹 서버 공격 (금융권 유형)
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `webshell_file_created` ★ 🆕¹·¹ | HIGH/MEDIUM | 웹 서버·셸이 웹 폴더에 .aspx·.jsp·.php 등을 새로 만듦 (Sysmon 11). 만든 프로그램을 모르면(폴링) MEDIUM | 웹쉘 설치 · **Backdoor** | UPLOADING_ATTACK → OTHER |
+| `object_enumeration` ★ 🛡 🆕¹·¹ | HIGH | 웹 로그: 한 IP 가 같은 주소에 값(고객번호 등)만 바꾼 요청을 60초 안에 30가지 이상 | 고객번호 열거 · 대량 조회 · **Injection** | VULNERABILITYSCAN |
+| `log_theft` ★ ⛔ 🆕¹·¹ | HIGH | 웹 서버 프로세스 아래에서 로그 폴더를 압축·복사 | 로그 파일 탈취 · **Backdoor** | - |
+
+## LLM 을 부르는 악성코드
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `llm_malware_pattern` ★ ⛔ 🆕¹·¹ | HIGH | wscript·cscript·mshta·Office(또는 그 자식)가 LLM API 접속, PowerShell 스크립트에서 LLM API 호출 | LLM 을 부르는 악성코드 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `llm_then_exec` ★ ⛔ 🆕¹·¹ | HIGH | LLM API 에 접속한 프로그램이 15초 안에 셸·정찰 명령 실행 (내 AI 도구는 제외) | LLM 지시로 명령 실행 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+
+## 지속 · 랜섬웨어 · 공급망
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `autorun_change` ★ 🆕¹·¹ | HIGH/MEDIUM | Run 키·시작프로그램에 스크립트·Temp·Public 을 가리키는 항목, 또는 셸·스크립트가 등록 | 자동 실행 등록 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `ransomware_prep` ★ ⛔ 🆕¹·¹ | HIGH | 백업·복구 수단 삭제 (vssadmin delete shadows · wbadmin delete · bcdedit recoveryenabled no) | 랜섬웨어 준비 · **Ransomware** | - |
+| `mass_file_change` ★ ⛔ 🆕¹·¹ | HIGH | 한 프로그램이 1분 안에 사용자 폴더에 문서 뒤에 낯선 확장자를 붙인 파일(report.docx.lock 등)을 50개 이상 생성 (Sysmon 11) | 대량 파일 암호화 의심 · **Ransomware** | - |
+| `package_install_exec` ★ ⛔ 🆕¹·¹ | HIGH | npm·pip 설치 중 실행된 명령에 다운로드·인코딩(curl·iwr·-enc·certutil -urlcache) | 공급망 · 설치 스크립트 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+
+## AI 코딩 도구 공격
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `git_spawned_unusual` ★ ⛔ 🆕¹·¹ | HIGH/MEDIUM | git 이 cmd·powershell·스크립트 호스트를 실행 (GitSpawn: .git/config 로 실행). 훅(sh) 경유면 MEDIUM | git 설정으로 실행 · **Injection** | COMMANDINJECTION → OTHER |
+| `agent_secret_access` ★ ⛔ 🆕¹·¹ | HIGH | AI 도구가 아닌 프로그램이 Claude·Cursor·Codex 토큰·MCP 설정을 읽거나 복사 (명령줄 · 4663) | AI 도구 토큰 탈취 · **Password** | - |
+
 ## 기본 설정값 (config.json)
 
 | 항목 | 값 | 뜻 |
@@ -86,7 +117,7 @@ DDS 에 들어 있는 탐지 규칙 39개입니다. (`attack_taxonomy.py` 의 `R
 | `ioc_ips` | 10개 | CrowdStrike ARTEX 보고서 공개 IP |
 | `ioc_ports / ioc_domains` | [18899] / ['xcai.pro'] | 같은 보고서 |
 | `artex_process_names` | artex, artex.exe, artex-ko, artex-ko.exe | 🆕 ARTEX 원본·한국어판 실행 파일 이름 → `artex_host_artifact` |
-| `artex_host_keywords` | 10개 (artex_token, autumn27/artex, 콘솔 제목 등) | 🆕 명령줄·경로에 있으면 `artex_host_artifact` |
+| `artex_host_keywords` | 11개 (artex_token, autumn27/artex, 콘솔 제목, cyberstrikeai 등) | 🆕 명령줄·경로에 있으면 `artex_host_artifact` |
 | `artex_user_agents` | artex-enrich/1.0 · Mozilla/5.0 (spa-api-recon) · Mozilla/5.0 (spa-api-recon spider) | 🆕 웹 로그에 있으면 `artex_user_agent` |
 | `web_log_dirs` | C:\inetpub\logs\LogFiles · C:\nginx\logs · C:\Apache24\logs | 🆕 있으면 읽는 웹 서버 로그 폴더 (IIS W3C · nginx/Apache combined) |
 | `js_burst` | 60초 · JS 30개 | 🆕 `js_asset_burst` 기준 |
@@ -94,7 +125,20 @@ DDS 에 들어 있는 탐지 규칙 39개입니다. (`attack_taxonomy.py` 의 `R
 | `retry_burst` | 120초 · 3번 · 유사도 0.8 | 🆕 `retry_loop` 기준 |
 | `distributed_ips` | 120초 · IP 3개 | 🆕 `distributed_ips` 기준 |
 | `dev_tool_ports` | 8888(Jupyter), 11434(Ollama), 1234(LM Studio), 7860(Gradio / text-generation-webui), 8188(ComfyUI) | 🆕 `dev_tool_exposed` · `dev_tool_inbound` |
-| `sysmon` | true | 🆕 Sysmon 이 설치돼 있으면 이벤트 1(프로세스)·3(네트워크)·22(DNS) 사용 |
-| `baseline` | 7일 · 이벤트 3,000건 학습 뒤 · 10분 안에 3가지 | 🆕 `baseline_anomaly` 기준 (`learn_days` · `min_events` · `window_sec` · `burst`) |
+| `sysmon` | true | Sysmon 이 있으면 이벤트 1·3·11·12·13·22 사용 |
+| `baseline` | 7일 · 이벤트 3,000건 학습 뒤 · 10분 안에 3가지 | 🆕 `baseline_anomaly` 기준 |
+| `powershell_4104` | true | 🆕¹·¹ PowerShell 스크립트 블록 기록 읽기 (enable_cmdline_audit.bat 가 켬) |
+| `web_root_dirs · web_root_markers · web_script_ext` | C:\inetpub\wwwroot · 확장자 10종 | 🆕¹·¹ `webshell_file_created` (Sysmon 없으면 웹 폴더를 30초마다 비교) |
+| `enum_burst` | 60초 · 값 30가지 | 🆕¹·¹ `object_enumeration` 기준 (정적 파일 제외) |
+| `log_markers · archive_markers` | 4 · 12개 | 🆕¹·¹ `log_theft` (웹 서버 아래에서만) |
+| `script_hosts · office_processes` | wscript.exe, cscript.exe, mshta.exe · Office 7종 | 🆕¹·¹ `llm_malware_pattern` |
+| `llm_exec_window_sec` | 15 | 🆕¹·¹ `llm_then_exec` — LLM 접속 뒤 이 시간 안의 셸 실행 |
+| `autorun_markers · suspicious_autorun_values` | 6 · 16개 | 🆕¹·¹ `autorun_change` (Sysmon 없으면 Run 키 · 시작프로그램 폴더를 30초마다 비교) |
+| `ransomware_patterns` | 11개 (vssadmin · wmic · wbadmin · bcdedit) | 🆕¹·¹ `ransomware_prep` |
+| `mass_file · doc_ext` | 60초 · 50개 · 비율 0.6 | 🆕¹·¹ `mass_file_change` — 문서 확장자 뒤에 낯선 확장자가 붙은 파일만 셈 |
+| `package_install_markers · download_markers` | 12 · 15개 | 🆕¹·¹ `package_install_exec` |
+| `git_suspicious_children` | cmd.exe, powershell.exe, pwsh.exe, wscript.exe, cscript.exe, mshta.exe, rundll32.exe, regsvr32.exe, certutil.exe, bitsadmin.exe | 🆕¹·¹ `git_spawned_unusual` |
+| `secret_markers · secret_readers_allow` | 12 · 17개 | 🆕¹·¹ `agent_secret_access` (4663 은 enable_secret_audit.ps1 로 켬) |
+| `notify` | syslog · 웹훅 (기본 꺼짐) | 🆕¹·¹ 침입 알림을 PC 밖으로 전송 (Logpresso 등) |
 
 > 기준값은 개발자가 정한 초기값입니다. 실제 PC 에서 며칠 돌려 보고 오탐에 맞춰 조정하세요.
