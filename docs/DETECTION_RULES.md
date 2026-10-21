@@ -12,11 +12,11 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
 |---|---|---|---|---|
 | `brute_force` ★ 🛡 | HIGH | 같은 계정·IP에서 5분 안에 로그인 실패 5회 | 비밀번호 대입 · **Password** | DICTIONARYBRUTEFORCE |
-| `remote_rdp_logon` ★ 🛡 | HIGH | 신뢰 목록에 없는 IP에서 RDP 로그인 성공 | 원격 로그인 · **Password** | - |
+| `remote_rdp_logon` ★ 🛡 | HIGH | 신뢰 목록에 없는 IP에서 RDP 로그인 성공 (Linux: 외부 IP 의 SSH 로그인 성공) | 원격 로그인 · **Password** | - |
 | `remote_network_logon` ★ | MEDIUM | 신뢰 목록에 없는 IP에서 네트워크 로그인 성공 | 원격 로그인 · **Password** | - |
 | `off_hours_logon` | MEDIUM | 업무 시간(config work_hours) 밖의 로그인 | 이상 시간 접속 | - |
-| `user_created` ★ | HIGH | 새 Windows 계정 생성 (이벤트 4720) | 백도어 계정 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
-| `added_to_admin_group` ★ | HIGH | 관리자 그룹에 계정 추가 (이벤트 4732) | 권한 상승 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `user_created` ★ | HIGH | 새 계정 생성 (Windows 4720 · Linux useradd) | 백도어 계정 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `added_to_admin_group` ★ | HIGH | 관리자 그룹에 계정 추가 (Windows 4732 · Linux sudo/wheel 그룹) | 권한 상승 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
 
 ## AI 해킹 도구
 
@@ -24,7 +24,7 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 |---|---|---|---|---|
 | `ioc_ip_match` ★ 🛡 | HIGH | 공개된 ARTEX 공격 IP·포트와 연결 | 공격 서버 통신 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
 | `port_scan` ★ 🛡 | HIGH | 한 IP가 30초 안에 내 포트 10개 이상 접속 | 정찰 · 포트 스캔 · **Scanning** | RECON-PORTSCAN → RECON |
-| `webserver_spawned_shell` ★ ⛔ | HIGH | 웹·DB 서버 프로세스가 cmd/powershell 실행 (웹쉘) | 명령 주입 · 웹쉘 · **Injection** | COMMANDINJECTION → OTHER |
+| `webserver_spawned_shell` ★ ⛔ | HIGH | 웹·DB 서버 프로세스가 cmd/powershell/sh/bash 실행 (웹쉘) | 명령 주입 · 웹쉘 · **Injection** | COMMANDINJECTION → OTHER |
 | `devserver_spawned_shell` | MEDIUM | python/node 가 쉘 실행 | 명령 실행 · **Injection** | COMMANDINJECTION → OTHER |
 | `recon_burst` ★ | HIGH | 정찰 명령 4종 이상이 60초 안에 실행 | 정찰 · 내부 정보 수집 · **Scanning** | RECON-HOSTDISCOVERY → RECON |
 | `shell_burst` | MEDIUM | 같은 부모가 60초 안에 쉘 10회 이상 실행 | 자동화 명령 실행 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
@@ -43,7 +43,7 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
 |---|---|---|---|---|
 | `threat_feed_match` ★ 🛡 | HIGH | threat_feeds 폴더의 위협 목록(IP·CIDR)에 있는 주소와 연결 | 위협 목록 IP · **Backdoor** | - |
-| `lolbin_outbound` ★ 🛡 | HIGH | powershell·cmd·certutil·mshta 같은 시스템 도구가 외부 IP 로 접속 | 원격 조종 의심 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `lolbin_outbound` ★ 🛡 | HIGH | powershell·cmd·certutil·mshta (Linux: bash·nc·socat) 같은 도구가 외부 IP 로 직접 접속 — 원격 조종·역접속 | 원격 조종 의심 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
 | `outbound_scan` ★ | HIGH | 한 프로그램이 60초 안에 IP 15개 이상에 접속 시도 (이 PC가 감염돼 퍼지는 신호) | 내부 확산 · 스캔 · **Scanning** | RECON-HOSTDISCOVERY → RECON |
 | `risky_port_inbound` ★ | MEDIUM | 외부 IP 가 RDP·SMB·WinRM·SSH·DB 같은 위험 포트로 연결 | 위험 포트 접근 · **Scanning** | - |
 | `odd_port_outbound` ★ | MEDIUM | 4444·1337·6667·9050 같은 해킹 도구 포트로 나가는 연결 | 해킹 도구 포트 통신 · **Backdoor** | - |
@@ -119,7 +119,7 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | `artex_process_names` | artex, artex.exe, artex-ko, artex-ko.exe | 🆕 ARTEX 원본·한국어판 실행 파일 이름 → `artex_host_artifact` |
 | `artex_host_keywords` | 11개 (artex_token, autumn27/artex, 콘솔 제목, cyberstrikeai 등) | 🆕 명령줄·경로에 있으면 `artex_host_artifact` |
 | `artex_user_agents` | artex-enrich/1.0 · Mozilla/5.0 (spa-api-recon) · Mozilla/5.0 (spa-api-recon spider) | 🆕 웹 로그에 있으면 `artex_user_agent` |
-| `web_log_dirs` | C:\inetpub\logs\LogFiles · C:\nginx\logs · C:\Apache24\logs | 🆕 있으면 읽는 웹 서버 로그 폴더 (IIS W3C · nginx/Apache combined) |
+| `web_log_dirs` | C:\inetpub\logs\LogFiles · C:\nginx\logs · C:\Apache24\logs · /var/log/nginx · /var/log/apache2 · /var/log/httpd | 🆕 있으면 읽는 웹 서버 로그 폴더 (IIS W3C · nginx/Apache combined) |
 | `js_burst` | 60초 · JS 30개 | 🆕 `js_asset_burst` 기준 |
 | `agent_burst` | 120초 · 3건 · 표시 2개 이상 | 🆕 `agent_command_style` 기준 (`agent_command_markers` 목록) |
 | `retry_burst` | 120초 · 3번 · 유사도 0.8 | 🆕 `retry_loop` 기준 |
@@ -128,17 +128,17 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | `sysmon` | true | Sysmon 이 있으면 이벤트 1·3·11·12·13·22 사용 |
 | `baseline` | 7일 · 이벤트 3,000건 학습 뒤 · 10분 안에 3가지 | 🆕 `baseline_anomaly` 기준 |
 | `powershell_4104` | true | 🆕¹·¹ PowerShell 스크립트 블록 기록 읽기 (enable_cmdline_audit.bat 가 켬) |
-| `web_root_dirs · web_root_markers · web_script_ext` | C:\inetpub\wwwroot · 확장자 10종 | 🆕¹·¹ `webshell_file_created` (Sysmon 없으면 웹 폴더를 30초마다 비교) |
+| `web_root_dirs · web_root_markers · web_script_ext` | C:\inetpub\wwwroot, /var/www, /usr/share/nginx/html · 확장자 14종 | 🆕¹·¹ `webshell_file_created` (Sysmon 없으면 웹 폴더를 30초마다 비교) |
 | `enum_burst` | 60초 · 값 30가지 | 🆕¹·¹ `object_enumeration` 기준 (정적 파일 제외) |
-| `log_markers · archive_markers` | 4 · 12개 | 🆕¹·¹ `log_theft` (웹 서버 아래에서만) |
-| `script_hosts · office_processes` | wscript.exe, cscript.exe, mshta.exe · Office 7종 | 🆕¹·¹ `llm_malware_pattern` |
+| `log_markers · archive_markers` | 5 · 18개 | 🆕¹·¹ `log_theft` (웹 서버 아래에서만) |
+| `script_hosts · office_processes` | wscript.exe, cscript.exe, mshta.exe · Office 9종 | 🆕¹·¹ `llm_malware_pattern` |
 | `llm_exec_window_sec` | 15 | 🆕¹·¹ `llm_then_exec` — LLM 접속 뒤 이 시간 안의 셸 실행 |
-| `autorun_markers · suspicious_autorun_values` | 6 · 16개 | 🆕¹·¹ `autorun_change` (Sysmon 없으면 Run 키 · 시작프로그램 폴더를 30초마다 비교) |
+| `autorun_markers · suspicious_autorun_values` | 17 · 28개 | 🆕¹·¹ `autorun_change` (Sysmon 없으면 Run 키 · 시작프로그램 폴더를 30초마다 비교) |
 | `ransomware_patterns` | 11개 (vssadmin · wmic · wbadmin · bcdedit) | 🆕¹·¹ `ransomware_prep` |
 | `mass_file · doc_ext` | 60초 · 50개 · 비율 0.6 | 🆕¹·¹ `mass_file_change` — 문서 확장자 뒤에 낯선 확장자가 붙은 파일만 셈 |
 | `package_install_markers · download_markers` | 12 · 15개 | 🆕¹·¹ `package_install_exec` |
-| `git_suspicious_children` | cmd.exe, powershell.exe, pwsh.exe, wscript.exe, cscript.exe, mshta.exe, rundll32.exe, regsvr32.exe, certutil.exe, bitsadmin.exe | 🆕¹·¹ `git_spawned_unusual` |
-| `secret_markers · secret_readers_allow` | 12 · 17개 | 🆕¹·¹ `agent_secret_access` (4663 은 enable_secret_audit.ps1 로 켬) |
+| `git_suspicious_children` | cmd.exe, powershell.exe, pwsh.exe, wscript.exe, cscript.exe, mshta.exe, rundll32.exe, regsvr32.exe, certutil.exe, bitsadmin.exe, bash, sh, dash, zsh, python3, perl, curl, wget, nc | 🆕¹·¹ `git_spawned_unusual` |
+| `secret_markers · secret_readers_allow` | 21 · 29개 | 🆕¹·¹ `agent_secret_access` (4663 은 enable_secret_audit.ps1 로 켬) |
 | `notify` | syslog · 웹훅 (기본 꺼짐) | 🆕¹·¹ 침입 알림을 PC 밖으로 전송 (Logpresso 등) |
 
 > 기준값은 개발자가 정한 초기값입니다. 실제 PC 에서 며칠 돌려 보고 오탐에 맞춰 조정하세요.

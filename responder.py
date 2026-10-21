@@ -21,6 +21,10 @@ from datetime import datetime
 import psutil
 
 from attack_taxonomy import BLOCK_RULES, INTRUSION_RULES, KILL_RULES  # 규칙 묶음은 한 곳에서 관리
+import linux_fw
+from osutil import IS_LINUX, IS_WIN, admin_word
+from osutil import beep as _beep_os
+from osutil import toast as _toast_os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 
@@ -98,10 +102,16 @@ def firewall_block(mon, ip, sim=False, by="수동"):
         return True, f"[시뮬레이션] {ip} 차단 명령 확인 (실제 방화벽은 안 바꿈)"
     if any(b["ip"] == ip for b in blocked_list(mon.db)):
         return True, f"{ip} 는 이미 차단돼 있어요"
-    if platform.system() != "Windows":
-        return False, "Windows에서만 방화벽 차단이 돼요"
     if not mon.admin:
-        return False, "관리자 권한으로 실행해야 방화벽 규칙을 넣을 수 있어요"
+        return False, f"{admin_word()}으로 실행해야 방화벽 규칙을 넣을 수 있어요"
+    if IS_LINUX:
+        ok, msg = linux_fw.block(ip)
+        if ok:
+            mon.db.meta_set("blocked_ips", blocked_list(mon.db) +
+                            [{"ip": ip, "at": datetime.now().strftime("%m-%d %H:%M"), "by": by}])
+        return ok, msg
+    if not IS_WIN:
+        return False, "Windows · Linux 에서만 방화벽 차단이 돼요"
     for dirn in ("in", "out"):
         r = subprocess.run(["netsh", "advfirewall", "firewall", "add", "rule",
                             f"name=DDS_BLOCK_{ip}_{dirn}", f"dir={dirn}", "action=block",
@@ -116,7 +126,11 @@ def firewall_block(mon, ip, sim=False, by="수동"):
 def firewall_unblock(mon, ip):
     if not valid_ip(ip):
         return False, "IP 형식이 아니에요"
-    if platform.system() == "Windows":
+    if IS_LINUX:
+        if not mon.admin:
+            return False, f"{admin_word()}으로 실행해야 방화벽 규칙을 지울 수 있어요"
+        linux_fw.unblock(ip)
+    if IS_WIN:
         if not mon.admin:
             return False, "관리자 권한으로 실행해야 방화벽 규칙을 지울 수 있어요"
         for dirn in ("in", "out"):
@@ -149,30 +163,11 @@ def kill_tree(pid, sim=False):
 
 # ================= 알림 =================
 def _beep():
-    try:
-        import winsound
-        for _ in range(3):
-            winsound.Beep(1200, 180)
-            time.sleep(0.08)
-    except Exception:
-        pass
+    _beep_os()
 
 
 def _toast(title, text):
-    """Windows 알림 영역 풍선 (PowerShell, 추가 설치 없음)"""
-    if platform.system() != "Windows":
-        return
-    t = title.replace("'", "''")[:60]
-    m = text.replace("'", "''")[:200]
-    ps = ("Add-Type -AssemblyName System.Windows.Forms;Add-Type -AssemblyName System.Drawing;"
-          "$n=New-Object System.Windows.Forms.NotifyIcon;$n.Icon=[System.Drawing.SystemIcons]::Warning;"
-          f"$n.BalloonTipTitle='{t}';$n.BalloonTipText='{m}';$n.Visible=$true;"
-          "$n.ShowBalloonTip(8000);Start-Sleep -Seconds 9;$n.Dispose()")
-    try:
-        subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception:
-        pass
+    _toast_os(title, text)
 
 
 class Responder:
@@ -274,7 +269,7 @@ class Responder:
                     json.dump({"trigger": {"rule": rule, "who": who, "detail": d, "sim": sim},
                                "recent_events": self.mon.db.recent_events(200)},
                               f, ensure_ascii=False, indent=2, default=str)
-                self._log(f"증거 자동 저장 — evidence\\{os.path.basename(path)}", True, sim, alert_id)
+                self._log(f"증거 자동 저장 — evidence/{os.path.basename(path)}", True, sim, alert_id)
 
 
 # ================= 긴급 버튼: 네트워크 격리 =================
@@ -292,16 +287,25 @@ def _fw_policy_snapshot():
     return out
 
 
-def emergency_on(mon, reason="긴급 버튼"):
+def emergency_on(mon, reason="긴급 버튼", keep_ips=()):
     st = mon.db.meta_get("emergency", {})
     if st.get("on"):
         return True, "이미 긴급 격리 중이에요"
     done = []
-    sim_only = platform.system() != "Windows"
+    sim_only = not (IS_WIN or (IS_LINUX and linux_fw.available()))
     if not sim_only and not mon.admin:
-        return False, "관리자 권한으로 실행해야 긴급 격리를 할 수 있어요"
+        return False, f"{admin_word()}으로 실행해야 긴급 격리를 할 수 있어요"
     snap = None
-    if not sim_only:
+    if IS_LINUX and not sim_only:
+        allow = list(dict.fromkeys(list(mon.cfg.get("emergency_allow_ips", [])) + list(keep_ips)))   # 버튼 누른 PC 는 유지
+        ok, msg, path = linux_fw.isolate(allow)
+        if not ok:
+            return False, msg
+        snap = {"linux": True, "file": path}
+        done.append(msg)
+        if not allow:
+            done.append("SSH 로 접속 중이었다면 연결도 끊김 — 서버 콘솔에서 emergency_release.sh 로 해제")
+    elif not sim_only:
         snap = _fw_policy_snapshot()
         subprocess.run(["netsh", "advfirewall", "set", "allprofiles", "state", "on"], capture_output=True)
         r = subprocess.run(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
@@ -310,8 +314,8 @@ def emergency_on(mon, reason="긴급 버튼"):
             return False, f"방화벽 설정 실패: {r.stdout.strip() or r.stderr.strip()}"
         done.append("들어오는 연결 전부 차단 (허용 규칙 무시)")
         done.append("나가는 연결 차단 (허용 규칙이 있는 시스템 통신만 예외)")
-    else:
-        done.append("[이 PC는 Windows 가 아니라 방화벽은 안 바꿈]")
+    if sim_only:
+        done.append("[방화벽 도구가 없어서 방화벽은 안 바꿈]")
     # 진행 중 사건의 웹쉘·공격 프로세스 종료
     try:
         import webui
@@ -326,7 +330,7 @@ def emergency_on(mon, reason="긴급 버튼"):
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"reason": reason, "recent_events": mon.db.recent_events(300),
                    "recent_alerts": mon.db.recent_alerts(100)}, f, ensure_ascii=False, indent=2, default=str)
-    done.append(f"증거 저장 — evidence\\{os.path.basename(path)}")
+    done.append(f"증거 저장 — evidence/{os.path.basename(path)}")
     mon.db.meta_set("emergency", {"on": True, "at": datetime.now().strftime("%m-%d %H:%M:%S"),
                                   "snapshot": snap, "done": done, "reason": reason, "simOnly": sim_only})
     acts = mon.db.meta_get("auto_actions", [])
@@ -341,7 +345,11 @@ def emergency_off(mon):
     st = mon.db.meta_get("emergency", {})
     if not st.get("on"):
         return True, "긴급 격리 중이 아니에요"
-    if platform.system() == "Windows":
+    if IS_LINUX and linux_fw.available():
+        if not mon.admin:
+            return False, f"{admin_word()}으로 실행해야 해제할 수 있어요"
+        linux_fw.release()
+    if IS_WIN:
         if not mon.admin:
             return False, "관리자 권한으로 실행해야 해제할 수 있어요"
         snap = st.get("snapshot") or {}
@@ -351,7 +359,7 @@ def emergency_off(mon):
     mon.db.meta_set("emergency", {"on": False, "offAt": datetime.now().strftime("%m-%d %H:%M:%S")})
     acts = mon.db.meta_get("auto_actions", [])
     acts.append({"ts": datetime.now().strftime("%H:%M:%S"), "text": "긴급 차단 해제 — 방화벽 정책을 차단 전으로 복구",
-                 "ok": True, "sim": platform.system() != "Windows", "alertId": mon.db.max_alert_id()})
+                 "ok": True, "sim": not (IS_WIN or (IS_LINUX and linux_fw.available())), "alertId": mon.db.max_alert_id()})
     mon.db.meta_set("auto_actions", acts[-200:])
     _toast("DDS 긴급 차단 해제", "네트워크 연결을 다시 열었어요")
     return True, "긴급 차단을 해제했어요 — 방화벽 정책을 차단 전으로 되돌렸어요"

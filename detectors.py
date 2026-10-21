@@ -135,6 +135,10 @@ class RuleDetector:
         self.secret_markers, self.secret_allow = L("secret_markers"), set(L("secret_readers_allow"))
         self.exfil_verbs = L("exfil_verbs")
         self.ai_domains_l = [d.lower() for d in cfg.get("ai_api_domains", [])]
+        self.web_shell_allow = L("webserver_shell_allow")
+        self.git_child_allow = L("git_child_allow")
+        self.automation_allow = L("automation_allow")
+        self.web_users = set(L("web_server_users"))
         self.proc_cache = {}                   # pid → {name, parent, chain(조상 이름), exe}
         self.llm_seen = {}                     # pid → LLM API 에 접속한 시각
         self.enum_window = defaultdict(deque)  # (IP, 정규화 경로) → (시각, 원래 경로)
@@ -186,6 +190,10 @@ class RuleDetector:
         return not (a.is_private or a.is_loopback or a.is_link_local or a.is_multicast
                     or a.is_reserved or a.is_unspecified) and ip not in self.trusted_ips
 
+    def _external_or_any(self, ip):
+        """원격 로그인 경보 대상인가 — 기본은 외부 IP 만. config remote_logon_alert_internal=true 면 내부망 IP 도"""
+        return self.cfg.get("remote_logon_alert_internal", False) or self._external(ip)
+
     def _once(self, rule, key, now, sec=600):
         last = self.susp_seen.get((rule, key))
         if last and (now - last).total_seconds() < sec:
@@ -222,6 +230,14 @@ class RuleDetector:
                 return True
         return False
 
+    def trusted_automation(self, p):
+        """회사에서 쓰는 관리 자동화(ansible · 모니터링 에이전트 등) 아래에서 실행됐나 — config automation_allow"""
+        if not self.automation_allow:
+            return False
+        text = " ".join([(p.get("parent") or "").lower()] +
+                        [((a.get("name") or "") + " " + (a.get("cmdline") or "")).lower() for a in p.get("ancestors") or []])
+        return any(a in text for a in self.automation_allow)
+
     @staticmethod
     def _norm_cmd(cmd):
         return re.sub(r"\s+", " ", re.sub(r"\d{3,}", "#", cmd)).strip()[:400]
@@ -248,7 +264,8 @@ class RuleDetector:
 
         if t == "logon_success":
             lt = ev.get("logon_type")
-            if lt == "rdp" and ip not in self.trusted_ips:
+            if (lt == "rdp" and ip not in self.trusted_ips) or \
+                    (lt == "ssh" and ip and ip not in self.trusted_ips and self._external_or_any(ip)):
                 alerts.append(("HIGH", "remote_rdp_logon", user, ev))
             elif lt == "network" and ip and ip not in self.trusted_ips and ip != "-":
                 alerts.append(("MEDIUM", "remote_network_logon", user, ev))
@@ -295,9 +312,9 @@ class RuleDetector:
         if is_shell or is_recon:
             if parent_is_ai:
                 alerts.append(("HIGH", "ai_spawned_shell", f"{parent} → {name}", p))
-            elif parent in self.web_procs:
+            elif parent in self.web_procs and not any(a in cmd for a in self.web_shell_allow):
                 alerts.append(("HIGH", "webserver_spawned_shell", f"{parent} → {name}", p))
-            elif parent in self.dev_procs:
+            elif parent in self.dev_procs and not self.trusted_automation(p):
                 alerts.append(("MEDIUM", "devserver_spawned_shell", f"{parent} → {name}", p))
 
         # --- 같은 부모가 기계 속도로 쉘 실행 ---
@@ -312,7 +329,7 @@ class RuleDetector:
                 q.clear()
 
         # --- 정찰 명령 몰아서 실행 (cmd /c whoami 처럼 부모가 매번 달라도 잡도록 PC 전체 기준) ---
-        if is_recon:
+        if is_recon and not self.trusted_automation(p):
             self.recon_window.append((now, name, parent))
             self._trim(self.recon_window, now, self.recon_cfg["window_sec"], key=lambda x: x[0])
             distinct = sorted({x[1] for x in self.recon_window})
@@ -336,7 +353,7 @@ class RuleDetector:
         alerts = []
         exe = (p.get("exe") or "").lower()
         base = name[:-4] if name.endswith(".exe") else name
-        local_ai = self.local_ai_tree(p)
+        local_ai = self.local_ai_tree(p) or self.trusted_automation(p)
 
         # --- ARTEX(원본·한국어판) 설치·실행 흔적 ---
         kw = [k for k in self.artex_kw if k in cmd or k in exe]
@@ -440,9 +457,11 @@ class RuleDetector:
                                 "after_sec": round((now - self.llm_seen[src]).total_seconds(), 1)}))
 
         # --- git 이 셸·스크립트 호스트 실행 (GitSpawn: .git/config 로 실행) — 내 AI 도구 아래여도 경보 ---
-        if parent == "git.exe" and (name in self.git_sus or any(d in exe for d in self.staging_dirs)):
+        if parent in ("git.exe", "git") and (name in self.git_sus or any(d in exe for d in self.staging_dirs)) \
+                and not any(a in cmd for a in self.git_child_allow):
             alerts.append(("HIGH", "git_spawned_unusual", f"git.exe → {name}", p))
-        elif parent in ("sh.exe", "bash.exe") and "git.exe" in chain[2:4] and name in self.git_sus:
+        elif parent in ("sh.exe", "bash.exe") and "git.exe" in chain[2:4] and name in self.git_sus \
+                and not any(a in cmd for a in self.git_child_allow):
             alerts.append(("MEDIUM", "git_spawned_unusual", f"git → {parent} → {name}", {**p, "via_hook": True}))
 
         # --- 패키지 설치 중 다운로드·인코딩 명령 (공급망) ---
@@ -471,13 +490,16 @@ class RuleDetector:
                 or any(d in exe for d in self.staging_dirs)
             if creator_web:
                 alerts.append(("HIGH", "webshell_file_created", f"{f.get('process')} → {f.get('path')}", f))
-            elif not proc:          # 폴링으로 발견: 만든 프로그램을 모름
+            elif not proc and (f.get("owner") or "").lower() in self.web_users:   # Linux: 웹 서버 계정이 만든 파일
+                alerts.append(("HIGH", "webshell_file_created", f"{f.get('owner')} → {f.get('path')}",
+                               {**f, "creator": f"웹 서버 계정 {f.get('owner')}"}))
+            elif not proc and not f.get("owner"):   # 폴링으로 발견 · 만든 프로그램 · 소유자 모름 (Windows)
                 alerts.append(("MEDIUM", "webshell_file_created", f.get("path"), {**f, "creator": "미상"}))
         # 시작프로그램 폴더
         if any(m in path for m in self.autorun_markers):
-            alerts += self._autorun(f, path, proc, exe, f.get("path"))
+            alerts += self._autorun(f, path + " " + (f.get("value") or "").lower(), proc, exe, f.get("path"))
         # 대량 파일 생성 (랜섬웨어 암호화 흔적) — 문서 확장자 뒤에 낯선 확장자가 붙은 파일 (report.docx.lock 같은)
-        if proc and "\\users\\" in path and f.get("pid"):
+        if proc and ("\\users\\" in path or path.startswith("/home/")) and f.get("pid"):
             base, ext = os.path.splitext(path)
             inner = os.path.splitext(base)[1]
             if inner in self.doc_ext and ext and ext not in self.common_ext and ext not in self.doc_ext:

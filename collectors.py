@@ -8,12 +8,17 @@
  - 폴링(Sysmon 없을 때 보완): 자동 실행(Run 키 · 시작프로그램 폴더), 웹 폴더의 새 스크립트 파일
  - 웹 서버 로그(IIS·nginx·Apache, 있으면): ARTEX 정찰 User-Agent 확인용
  - 새 프로세스의 조상(부모의 부모…) 이름·명령줄: 내가 쓰는 AI 도구 아래에서 실행됐는지 판단
+Linux
+ - 로그인: /var/log/auth.log · /var/log/secure (없으면 journalctl) — SSH 성공·실패, 계정 생성, sudo/wheel 그룹 추가
+ - 자동 실행: cron · systemd 서비스 · authorized_keys · .bashrc · ld.so.preload 변경 (30초 비교)
 """
 import glob
 import ntpath
 import os
 import re
+import shutil
 import socket
+import subprocess
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from urllib.parse import unquote_plus
@@ -248,6 +253,139 @@ class NetworkCollector:
         return out
 
 
+# ================= Linux 로그인 기록 =================
+_RE_FAIL = re.compile(r"Failed (?:password|publickey|keyboard-interactive/pam) for (?:invalid user )?(\S+) from (\S+)")
+_RE_OK = re.compile(r"Accepted (\S+) for (\S+) from (\S+)")
+_RE_USERADD = re.compile(r"useradd\[\d+\]: new user: name=([^,\s]+)")
+_RE_GROUP = re.compile(r"(?:usermod\[\d+\]: add '([^']+)' to (?:shadow )?group '(sudo|wheel|admin|root)'"
+                       r"|gpasswd\[\d+\]: user (\S+) added by \S+ to group (sudo|wheel|admin|root))")
+
+
+def parse_auth_line(line):
+    """auth.log / secure 한 줄 → 로그인 이벤트 (관련 없으면 None)"""
+    m = _RE_OK.search(line)
+    if m:
+        return {"type": "logon_success", "event_id": "sshd", "user": m.group(2), "src_ip": m.group(3),
+                "logon_type": "ssh", "method": m.group(1), "raw": line[:300]}
+    m = _RE_FAIL.search(line)          # "Invalid user" 줄은 같은 시도의 "Failed password" 와 겹쳐서 안 셈
+    if m:
+        return {"type": "logon_fail", "event_id": "sshd", "user": m.group(1), "src_ip": m.group(2),
+                "logon_type": "ssh", "raw": line[:300]}
+    m = _RE_USERADD.search(line)
+    if m:
+        return {"type": "user_created", "event_id": "useradd", "user": m.group(1), "raw": line[:300]}
+    m = _RE_GROUP.search(line)
+    if m:
+        return {"type": "added_to_admin_group", "event_id": "usermod", "user": m.group(1) or m.group(3),
+                "group": m.group(2) or m.group(4), "raw": line[:300]}
+    return None
+
+
+class LinuxAuthCollector:
+    """Linux 인증 로그에서 새 줄만 읽음 (root 권한 필요). 파일이 없으면 journalctl 사용"""
+    FILES = ("/var/log/auth.log", "/var/log/secure")
+
+    def __init__(self):
+        self.path = next((f for f in self.FILES if os.path.isfile(f) and os.access(f, os.R_OK)), None)
+        self.pos = os.path.getsize(self.path) if self.path else 0
+        self.journal = None
+        if not self.path and shutil.which("journalctl"):
+            try:
+                r = subprocess.run(["journalctl", "-n", "0", "--show-cursor", "-q"], capture_output=True,
+                                   text=True, timeout=20)
+                m = re.search(r"cursor: (\S+)", r.stdout + r.stderr)
+                self.journal = m.group(1) if m else ""
+            except Exception:
+                self.journal = None
+        self.ok = bool(self.path) or self.journal is not None
+        self.source = self.path or ("journalctl" if self.journal is not None else "")
+
+    def _lines(self):
+        if self.path:
+            size = os.path.getsize(self.path)
+            if size < self.pos:          # 로그 교체(logrotate)
+                self.pos = 0
+            with open(self.path, encoding="utf-8", errors="ignore") as f:
+                f.seek(self.pos)
+                data = f.read(2_000_000)
+                self.pos = f.tell()
+            return data.splitlines()
+        args = ["journalctl", "-q", "--no-pager", "-o", "short-iso", "--show-cursor",
+                "_COMM=sshd", "+", "_COMM=sshd-session", "+", "_COMM=useradd", "+", "_COMM=usermod", "+", "_COMM=gpasswd"]
+        args += ["--after-cursor", self.journal] if self.journal else ["--since", "-10s"]
+        r = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        out = []
+        for line in r.stdout.splitlines():
+            if line.startswith("-- cursor:"):
+                self.journal = line.split(":", 1)[1].strip()
+            else:
+                out.append(line)
+        return out
+
+    def collect(self):
+        if not self.ok:
+            return []
+        out = []
+        try:
+            for line in self._lines():
+                ev = parse_auth_line(line)
+                if ev:
+                    out.append(ev)
+        except Exception:
+            pass
+        return out
+
+
+LINUX_AUTORUN = ["/etc/crontab", "/etc/cron.d", "/var/spool/cron", "/etc/systemd/system", "/etc/rc.local",
+                 "/etc/profile.d", "/etc/ld.so.preload", "/root/.ssh/authorized_keys", "/root/.bashrc"]
+
+
+class LinuxAutorunCollector:
+    """cron · systemd · authorized_keys · .bashrc · ld.so.preload 를 30초마다 비교 → 바뀐 파일과 추가된 줄"""
+
+    def __init__(self):
+        self.ok = True
+        self.seen = self._snapshot()
+
+    def _paths(self):
+        out = []
+        homes = [os.path.join("/home", h) for h in (os.listdir("/home") if os.path.isdir("/home") else [])]
+        for p in LINUX_AUTORUN + [os.path.join(h, x) for h in homes
+                                  for x in (".ssh/authorized_keys", ".bashrc", ".profile", ".config/systemd/user")]:
+            if os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    out += [os.path.join(root, f) for f in files]
+                    if len(out) > 3000:
+                        break
+            elif os.path.isfile(p):
+                out.append(p)
+        return out[:3000]
+
+    def _snapshot(self):
+        snap = {}
+        for p in self._paths():
+            try:
+                with open(p, encoding="utf-8", errors="ignore") as f:
+                    snap[p] = f.read(65536)
+            except OSError:
+                continue
+        return snap
+
+    def collect(self):
+        now = self._snapshot()
+        out = []
+        for p, text in now.items():
+            old = self.seen.get(p)
+            if old == text:
+                continue
+            prev = set((old or "").splitlines())
+            added = [ln for ln in text.splitlines() if ln.strip() and ln not in prev]
+            out.append(("file", {"path": p, "value": "\n".join(added)[:2000], "process": "", "exe": "",
+                                 "source": "poll", "new_file": old is None}))
+        self.seen = now
+        return out
+
+
 # ================= Sysmon (있을 때만) =================
 SYSMON_CHANNEL = "Microsoft-Windows-Sysmon/Operational"
 
@@ -430,6 +568,15 @@ class AutorunCollector:
         return out
 
 
+def _owner(path):
+    """파일 소유자 (Linux: www-data 같은 웹 서버 계정이 만들었는지 보려고)"""
+    try:
+        import pwd
+        return pwd.getpwuid(os.stat(path).st_uid).pw_name
+    except Exception:
+        return ""
+
+
 class WebRootCollector:
     """웹 폴더(예: C:\\inetpub\\wwwroot)에 새로 생긴 스크립트 파일 — 만든 프로그램은 모름"""
 
@@ -455,7 +602,8 @@ class WebRootCollector:
         now = self._snapshot()
         new = now - self.seen
         self.seen = now
-        return [("file", {"path": p, "process": "", "exe": "", "source": "poll"}) for p in sorted(new)[:200]]
+        return [("file", {"path": p, "process": "", "exe": "", "source": "poll", "owner": _owner(p)})
+                for p in sorted(new)[:200]]
 
 
 # ================= 웹 서버 로그 (IIS W3C · nginx/Apache combined) =================
@@ -503,7 +651,11 @@ class WebLogCollector:
     def _files(self):
         out = []
         for d in self.dirs:
-            out += glob.glob(os.path.join(d, "**", "*.log"), recursive=True)
+            for f in glob.glob(os.path.join(d, "**", "*"), recursive=True):
+                n = os.path.basename(f).lower()
+                if os.path.isfile(f) and (n.endswith(".log") or "access" in n) \
+                        and not n.endswith((".gz", ".zip", ".bz2", ".xz")) and "error" not in n:
+                    out.append(f)
         return out[:200]
 
     def collect(self, limit=5000):

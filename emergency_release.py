@@ -2,6 +2,7 @@ r"""긴급 차단 해제 (DDS 화면이 안 열릴 때 쓰는 비상용)
 
 사용: emergency_release.bat 더블클릭  (관리자 권한 자동 요청)
      또는 관리자 CMD 에서  python emergency_release.py
+     Linux: sudo ./emergency_release.sh   (서버 콘솔에서 — SSH 가 끊겼을 때)
 하는 일
   1. DDS 가 긴급 격리 직전에 저장해 둔 방화벽 정책으로 되돌림
      (저장된 게 없으면 Windows 기본값: 들어옴 차단 · 나감 허용)
@@ -22,8 +23,10 @@ DEFAULT = "BlockInbound,AllowOutbound"
 
 def is_admin():
     try:
-        import ctypes
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        if platform.system() == "Windows":
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        return os.geteuid() == 0
     except Exception:
         return False
 
@@ -34,11 +37,13 @@ def read_meta(con, k):
 
 
 def main():
-    if platform.system() != "Windows":
-        print("Windows 에서만 동작해요.")
+    linux = platform.system() == "Linux"
+    if not linux and platform.system() != "Windows":
+        print("Windows · Linux 에서만 동작해요.")
         return 1
     if not is_admin():
-        print("관리자 권한이 필요해요. emergency_release.bat 로 실행하거나 관리자 CMD 에서 실행하세요.")
+        print("root 권한이 필요해요: sudo ./emergency_release.sh" if linux else
+              "관리자 권한이 필요해요. emergency_release.bat 로 실행하거나 관리자 CMD 에서 실행하세요.")
         return 1
 
     snap, con = None, None
@@ -60,6 +65,20 @@ def main():
         except Exception as e:
             print(f"DB 읽기 실패 (기본값으로 복구): {e}")
 
+    if linux:
+        sys.path.insert(0, BASE)
+        import linux_fw
+        print("\n[iptables 격리 해제]")
+        ok, msg = linux_fw.release()
+        print("  " + msg)
+        if "--all-ip" in sys.argv:
+            print("\n[DDS 가 넣은 IP 차단 규칙 삭제]")
+            n = linux_fw.remove_all_blocks()
+            if con:
+                con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('blocked_ips', '[]')")
+            print(f"  {n}개 삭제")
+        return _finish(con)
+
     print("\n[방화벽 정책 복구]")
     for prof in ("domainprofile", "privateprofile", "publicprofile"):
         pol = (snap or {}).get(prof) or DEFAULT
@@ -80,6 +99,10 @@ def main():
             con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('blocked_ips', '[]')")
         print(f"  {len(names)}개 삭제")
 
+    return _finish(con)
+
+
+def _finish(con):
     if con:
         con.execute("INSERT OR REPLACE INTO meta(k,v) VALUES('emergency', ?)",
                     (json.dumps({"on": False, "offAt": datetime.now().strftime("%m-%d %H:%M:%S"),

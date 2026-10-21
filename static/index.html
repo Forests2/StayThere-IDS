@@ -255,6 +255,7 @@ td.nowrap{white-space:nowrap}
         <button class="btn" data-sim="agent" title="ARTEX 한국어판 · 2026-10 공개 사례 패턴">AI 에이전트 테스트</button>
         <button class="btn" data-sim="web" title="금융권 공격 유형: 고객번호 열거 · 웹쉘 · 로그 탈취">웹 침투 테스트</button>
         <button class="btn" data-sim="llm" title="PROMPTSTEAL · PROMPTFLUX 방식 + 랜섬웨어 준비">LLM 악성코드 테스트</button>
+        <button class="btn" data-sim="linux" title="SSH 대입 · nginx 웹쉘 · bash 역접속 · cron 지속성">리눅스 서버 테스트</button>
       </div>
     </div>
 
@@ -516,6 +517,7 @@ const empty = (msg, cols) => cols ? `<tr><td colspan="${cols}" class="empty">${e
 // ================= 실시간 감시 =================
 function render(s) {
   TOKEN = s.token;
+  DDS_OS = s.os || 'windows';
   const inc = s.incident, alert = !!inc;
   $('warns').innerHTML = (s.warnings||[]).map(w => `<div class="warnbar">${esc(w)}</div>`).join('');
   $('lastScan').textContent = s.lastScan || '준비 중';
@@ -727,8 +729,9 @@ async function checkIP(ip) {
 async function loadRules() {
   const d = await getJ('/api/rules');
   $('ruleCount').textContent = d.rules.length;
-  $('rulesWarn').innerHTML = d.logon ? '' : '<div class="warnbar">로그인 감시가 꺼져 있어요 (관리자 권한 + pywin32 필요). "누가 침입했나" 규칙은 지금 실제로 동작하지 않아요.</div>';
-  if (d.sources) $('rulesWarn').innerHTML += `<div class="cap" style="margin:8px 0">수집: 명령줄(4688) ${d.sources['4688'] ? '켜짐' : '꺼짐 — enable_cmdline_audit.bat'} · PowerShell(4104) ${d.sources.ps4104 ? '켜짐' : '꺼짐'} · Sysmon ${d.sources.sysmon ? '켜짐' : '없음'} · 자동 실행 감시 ${d.sources.autorun ? '켜짐' : '없음'} · 웹 로그 ${d.sources.weblog ? d.sources.weblog + '곳' : '없음'} · 평소 패턴 학습 ${esc(d.baseline || '-')}</div>`;
+  $('rulesWarn').innerHTML = d.logon ? '' : '<div class="warnbar">로그인 감시가 꺼져 있어요 (Windows: 관리자 권한 + pywin32 · Linux: root 권한 필요). "누가 침입했나" 규칙은 지금 실제로 동작하지 않아요.</div>';
+  if (d.sources && DDS_OS === 'linux') $('rulesWarn').innerHTML += `<div class="cap" style="margin:8px 0">수집 (Linux): SSH 로그인 ${d.sources.ssh ? esc(d.sources.ssh) : '꺼짐 (root 권한 필요)'} · 자동 실행(cron·systemd·authorized_keys) 감시 ${d.sources.autorun ? '켜짐' : '꺼짐'} · 웹 로그 ${d.sources.weblog ? d.sources.weblog + '곳' : '없음'} · 웹 폴더 ${d.sources.webroot ? d.sources.webroot + '곳' : '없음'} · iptables ${d.sources.iptables ? '있음' : '없음 (차단 불가)'} · 평소 패턴 학습 ${esc(d.baseline || '-')}</div>`;
+  else if (d.sources) $('rulesWarn').innerHTML += `<div class="cap" style="margin:8px 0">수집: 명령줄(4688) ${d.sources['4688'] ? '켜짐' : '꺼짐 — enable_cmdline_audit.bat'} · PowerShell(4104) ${d.sources.ps4104 ? '켜짐' : '꺼짐'} · Sysmon ${d.sources.sysmon ? '켜짐' : '없음'} · 자동 실행 감시 ${d.sources.autorun ? '켜짐' : '없음'} · 웹 로그 ${d.sources.weblog ? d.sources.weblog + '곳' : '없음'} · 평소 패턴 학습 ${esc(d.baseline || '-')}</div>`;
   const groups = [...new Set(d.rules.map(r => r.group))];
   $('rulesBody').innerHTML = groups.map(g => {
     const rs = d.rules.filter(r => r.group === g);
@@ -772,10 +775,39 @@ const GUIDES = {
     ['내 다른 PC에서 원격 접속', 'config.json 의 trusted_ips 에 그 PC 의 IP를 넣고 DDS를 다시 시작해요.', '"trusted_ips": ["127.0.0.1", "::1", "<내 PC IP>"]'],
     ['야근이 잦으면', 'config.json 의 work_hours 를 바꿔요.', '"work_hours": {"start": 7, "end": 23}']]}
 };
+// Linux 서버용 조치 가이드 (sudo 명령)
+const GUIDES_LINUX = {
+  ai: {name: 'AI 해킹 도구 · 웹 침투', intro: '스캔 → 웹쉘(nginx·php-fpm → sh) → 정찰 명령 → 공격 서버 통신 순서로 잡힌 경우. 자동 도구라 몇 분 안에 끝까지 가요. 차단이 먼저예요.', steps: [
+    ['공격 IP 차단', '실시간 감시 화면의 "IP 차단" 버튼, 또는 아래 명령.', 'sudo iptables -I INPUT 1 -s <IP> -j DROP -m comment --comment DDS_BLOCK_<IP>\nsudo iptables -I OUTPUT 1 -d <IP> -j DROP -m comment --comment DDS_BLOCK_<IP>'],
+    ['웹쉘 프로세스 종료', '"프로세스 종료" 버튼은 웹 서버가 띄운 sh/bash 만 끝내요. 웹 서버 자체는 안 건드려요.', 'sudo pkill -9 -P <PID>; sudo kill -9 <PID>'],
+    ['웹 폴더에서 최근 바뀐 파일 찾기', '이틀 안에 생기거나 바뀐 스크립트 파일. 경로는 웹 루트로 바꾸세요.', 'sudo find /var/www /usr/share/nginx/html -type f \\( -name "*.php" -o -name "*.jsp" -o -name "*.cgi" -o -name "*.sh" \\) -mtime -2 -ls'],
+    ['/tmp · /dev/shm 의 실행 파일 확인', '공격 도구를 내려받아 실행하는 흔한 위치예요.', 'sudo find /tmp /dev/shm /var/tmp -type f -perm -u+x -ls'],
+    ['증거 저장', '"증거 저장" 버튼 → evidence 폴더에 JSON 으로 남아요. 지우기 전에 먼저 저장하세요.', null],
+    ['보안 담당자 보고 · 비밀번호 변경', '웹 서비스·DB 계정 비밀번호를 바꾸고, 같은 IP 가 다른 서버에도 왔는지 확인을 요청하세요.', null]]},
+  hacker: {name: 'SSH 침입', intro: 'SSH 비밀번호 대입 → 로그인 → 계정 생성 → sudo 권한 순서로 잡힌 경우. 세션을 끊고 만든 계정을 막는 게 먼저예요.', steps: [
+    ['접속 중인 세션 확인 · 끊기', '모르는 세션의 TTY 를 확인해 끊어요.', 'who -a\nsudo pkill -9 -t <TTY>'],
+    ['출발지 IP 차단', '"IP 차단" 버튼 또는 위협 IP 목록에서.', null],
+    ['새로 만든 계정 잠그기 · sudo 에서 빼기', '"무엇이" 칸의 계정 이름을 넣으세요.', 'sudo usermod -L -s /usr/sbin/nologin <계정>\nsudo gpasswd -d <계정> sudo; sudo gpasswd -d <계정> wheel'],
+    ['authorized_keys · cron 확인', '공격자가 다시 들어오려고 SSH 키나 예약 작업을 심었는지 봐요.', 'sudo cat /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys\nsudo ls -la /etc/cron.d /var/spool/cron/crontabs 2>/dev/null; sudo crontab -l'],
+    ['SSH 비밀번호 로그인 끄기', '키 로그인만 쓰면 대입 공격이 안 통해요. 적용 전 키 로그인이 되는지 꼭 확인하세요.', 'sudo sed -i "s/^#\\?PasswordAuthentication.*/PasswordAuthentication no/" /etc/ssh/sshd_config && sudo systemctl reload sshd']]},
+  unknown: {name: '모르는 프로그램이 AI 서버에 접속', intro: '목록에 없는 프로그램이 LLM API 에 접속한 경우. 정상 프로그램일 수도 있어서 먼저 정체를 확인해요.', steps: [
+    ['파일 위치 · 명령줄 확인', '/tmp, /dev/shm, 홈 폴더 숨김 파일이면 의심해요.', 'sudo ls -l /proc/<PID>/exe; sudo cat /proc/<PID>/cmdline | tr "\\0" " "'],
+    ['누가 띄웠는지 확인', '부모 프로세스를 봐요.', 'ps -o pid,ppid,user,lstart,cmd -p <PID>; pstree -ps <PID>'],
+    ['모르는 거면 종료 · 아는 거면 허용', '모르면 증거 저장 후 종료. 쓰는 프로그램이면 AI 도구 탐지 화면에서 "허용 목록에 추가".', 'sudo kill -9 <PID>']]},
+  fp: {name: '오탐일 때', intro: '내가 한 일인데 경보가 뜬 경우. 다음에 안 뜨게 설정해요.', steps: [
+    ['관리 자동화 (ansible 등)', 'config.json 의 automation_allow 에 자동화 도구 이름을 넣어요.', '"automation_allow": ["ansible", "<도구 이름>"]'],
+    ['관리 PC 의 SSH 접속', '외부 IP 에서 관리한다면 trusted_ips 에 넣어요. 내부망 SSH 는 원래 경보 안 해요.', '"trusted_ips": ["127.0.0.1", "::1", "<관리 PC IP>"]'],
+    ['긴급 격리 때 끊기면 안 되는 IP', '긴급 격리해도 이 IP 와는 통신을 유지해요 (관리용 SSH 등).', '"emergency_allow_ips": ["<관리 PC IP>"]'],
+    ['웹 서버가 정상으로 셸을 쓰는 경우', 'PHP 메일 발송 같은 것. 명령줄에 들어가는 단어를 넣어요.', '"webserver_shell_allow": ["sendmail", "<단어>"]']]}
+};
+let DDS_OS = 'windows';
+
 function renderGuide() {
-  $('guideTabs').innerHTML = Object.entries(GUIDES).map(([k, g]) =>
+  const GD = DDS_OS === 'linux' ? GUIDES_LINUX : GUIDES;
+  if (!GD[GUIDE]) GUIDE = Object.keys(GD)[0];
+  $('guideTabs').innerHTML = Object.entries(GD).map(([k, g]) =>
     `<button class="gtab ${k===GUIDE?'on':''}" role="tab" aria-selected="${k===GUIDE}" data-guide="${k}">${esc(g.name)}</button>`).join('');
-  const g = GUIDES[GUIDE];
+  const g = GD[GUIDE];
   const gip = ($('guideIp').value || '').trim();
   const fill = (c) => gip ? c.split('<IP>').join(gip) : c;
   $('guideBody').innerHTML = `<div class="gintro">${esc(g.intro)}</div>` + g.steps.map(([t, p, c], i) =>

@@ -244,6 +244,35 @@ def scenario_normal_dev():
     return run("시나리오 I: 정상 개발 · 운영", steps, det, clock)
 
 
+def scenario_linux_attack():
+    import monitor
+    clock = Clock(datetime(2026, 10, 21, 5, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    steps = [(f"{k} {ev.get('type') or ev.get('cmdline') or ev.get('path') or ev.get('raddr_ip')}"[:38], k, ev, w * 2)
+             for k, ev, w in monitor.scenario_linux()]
+    return run("시나리오 J: 리눅스 서버 침입", steps, det, clock)
+
+
+def scenario_linux_normal():
+    clock = Clock(datetime(2026, 10, 21, 15, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    ans = [{"pid": 700, "name": "python3", "cmdline": "/usr/bin/python3 /root/.ansible/tmp/ansible-tmp-1/AnsiballZ_setup.py"},
+           {"pid": 690, "name": "sh", "cmdline": "/bin/sh -c ansible"}, {"pid": 600, "name": "sshd", "cmdline": "sshd: deploy"}]
+    steps = [("내부망 SSH 로그인", "logon", {"type": "logon_success", "user": "ops", "src_ip": "10.10.1.5", "logon_type": "ssh"}, 0)]
+    for i, c in enumerate(["whoami", "id", "uname", "hostname", "ss"]):
+        steps.append((f"ansible 정보 수집 {c}", "process", {**proc(7100 + i, 700, c, "python3", c), "ancestors": ans}, 1))
+    steps += [("php-fpm → sendmail", "process", proc(7200, 7199, "sh", "php-fpm8.1", "sh -c /usr/sbin/sendmail -t -i"), 3),
+              ("git 훅 (Linux)", "process", proc(7300, 7299, "sh", "git", "sh .git/hooks/pre-commit"), 3),
+              ("git 자격 증명 도우미", "process", proc(7301, 7299, "sh", "git", "sh -c 'git credential-cache get'"), 1),
+              ("패키지가 cron 추가", "file", {"path": "/etc/cron.d/sysstat", "value": "5-55/10 * * * * root command -v debian-sa1 > /dev/null && debian-sa1 1 1",
+                                           "process": "", "source": "poll", "new_file": True}, 3),
+              ("서비스 파일 추가", "file", {"path": "/etc/systemd/system/myapp.service", "value": "ExecStart=/opt/myapp/bin/myapp",
+                                          "process": "", "source": "poll"}, 3),
+              ("배포 계정이 웹 파일 올림", "file", {"path": "/var/www/html/index.php", "process": "", "source": "poll", "owner": "deploy"}, 3),
+              ("curl 로 업데이트 확인", "network", net("outbound", "151.101.2.132", 443, 40100, "curl"), 3)]
+    return run("시나리오 K: 리눅스 정상 운영", steps, det, clock)
+
+
 def test_parsers():
     print("\n=== 수집기 파서 ===")
     ok = True
@@ -355,6 +384,8 @@ if __name__ == "__main__":
     g_ = scenario_llm()
     h_ = scenario_coding_agent()
     i_ = scenario_normal_dev()
+    j_ = scenario_linux_attack()
+    k_ = scenario_linux_normal()
     judged = judge_check(c)
     expect = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst"}
     expect_c = {"artex_user_agent", "distributed_ips", "agent_command_style", "retry_loop", "payload_staging",
@@ -371,7 +402,10 @@ if __name__ == "__main__":
     miss += "artex_host_artifact" not in d
     for tag, got, want in (("F", f_, {"object_enumeration", "webshell_file_created", "log_theft"}),
                            ("G", g_, {"llm_malware_pattern", "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change"}),
-                           ("H", h_, {"git_spawned_unusual", "package_install_exec", "agent_secret_access"})):
+                           ("H", h_, {"git_spawned_unusual", "package_install_exec", "agent_secret_access"}),
+                           ("J", j_, {"brute_force", "remote_rdp_logon", "webserver_spawned_shell", "recon_burst",
+                                      "lolbin_outbound", "odd_port_outbound", "payload_staging", "credential_dump",
+                                      "user_created", "added_to_admin_group", "autorun_change", "webshell_file_created"})):
         for r in sorted(want):
             print(f"  {'OK ' if r in got else 'MISS'} {tag} {r}")
             miss += r not in got
@@ -379,6 +413,10 @@ if __name__ == "__main__":
     print(f"  정상 개발·운영(I) → 빨간 경보 {len(i_intr)}건 ({'OK' if not i_intr else '오탐: ' + ', '.join(i_intr)})"
           f" · 기록만: {', '.join(sorted(set(i_))) or '없음'}")
     miss += len(i_intr)
+    k_intr = [r for r in k_ if r in INTRUSION_RULES]
+    print(f"  리눅스 정상 운영(K) → 빨간 경보 {len(k_intr)}건 ({'OK' if not k_intr else '오탐: ' + ', '.join(k_intr)})"
+          f" · 기록만: {', '.join(sorted(set(k_))) or '없음'}")
+    miss += len(k_intr)
     e_intr = [r for r in e if r in INTRUSION_RULES]
     print(f"  정상 사용 알림 수: {len(b)} ({'OK' if not b else '오탐 있음: ' + ', '.join(b)})")
     print(f"  내 AI 도구 사용 → 빨간 경보 {len(e_intr)}건 ({'OK' if not e_intr else '오탐: ' + ', '.join(e_intr)})"

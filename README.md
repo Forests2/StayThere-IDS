@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg)
+![Linux](https://img.shields.io/badge/Linux-server-FCC624.svg)
 ![Rules 50](https://img.shields.io/badge/detection%20rules-50-red.svg)
 
 **[English summary below](#english-summary)**
@@ -24,6 +25,7 @@
 - **수집** — Sysmon 11·12·13(파일·레지스트리) 추가, Sysmon 이 없으면 Run 키·시작프로그램·웹 폴더를 30초마다 비교, IIS 로그의 쿼리 문자열까지 읽음
 - **알림 외부 전송** — 침입 알림을 syslog(Logpresso 등)·웹훅으로 보냄 (`notify`, 기본 꺼짐)
 - **대시보드** — 센서 9개(웹 서버 · 악성코드·랜섬웨어 추가), 「웹 침투 테스트」·「LLM 악성코드 테스트」 버튼, 사건 종류별 표시(ARTEX 계열 / LLM 을 부르는 악성코드 / AI 에이전트)
+- **Linux 서버 지원** — SSH 로그인 기록(auth.log · secure · journalctl), iptables 차단 · 긴급 격리, cron · systemd · authorized_keys 감시, nginx·php-fpm 웹쉘, bash 역접속, `run_dds.sh` ([Linux 에서 실행](#linux-에서-실행))
 - 근거 자료: [docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md) · [docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md) · 변경 내용: [CHANGELOG.md](CHANGELOG.md)
 
 ### 2026-10-19 — ARTEX 한국어판 · AI 에이전트 행동 탐지 · 평소 패턴 학습 (탐지 규칙 25 → 39개)
@@ -229,8 +231,37 @@ python dds_agent.py --alerts   :: 최근 알림만 출력
 python -m pip install -r requirements.txt --index-url <사내 PyPI 주소> --trusted-host <호스트>
 ```
 
+### Linux 에서 실행
+
+회사 서버처럼 Linux 에서도 돌아갑니다 (Ubuntu · RHEL 계열, Python 3.9 이상, root 권한).
+
+```bash
+git clone https://github.com/Forests2/StayThere-IDS.git
+cd StayThere-IDS
+chmod +x *.sh
+sudo ./run_dds.sh
+```
+- 폐쇄망이면 사내 PyPI 미러로 psutil 설치: `sudo PIP_INDEX=http://<사내 PyPI>/simple PIP_HOST=<호스트> ./run_dds.sh`
+- 대시보드는 서버 안에서만 열립니다(127.0.0.1). 내 PC 에서 보려면 SSH 터널: `ssh -L 8765:127.0.0.1:8765 <계정>@<서버>` → 내 PC 브라우저에서 http://127.0.0.1:8765
+- 내부망의 다른 PC 에서 바로 보려면 `config.json` 의 `dashboard` 를 `"host": "0.0.0.0"`, `"port": <포트>`, `"allow_ips": [<내부망 대역>]` 로 바꾸고 `sudo ./set_password.sh` 로 비밀번호를 정하세요. 허용 대역 밖은 403, 다른 PC 는 비밀번호(HTTP Basic, 해시만 저장)를 물어봅니다. 긴급 격리 버튼을 누른 PC 와의 연결은 유지됩니다.
+- 외부 IP 조사: `./check_ip.sh <IP>` · 긴급 격리 해제(서버 콘솔에서): `sudo ./emergency_release.sh` (`--all-ip` 로 DDS 차단 규칙 전부 삭제)
+
+| | Windows | Linux |
+|---|---|---|
+| 로그인 | 보안 이벤트 4624·4625·4720·4732 | `/var/log/auth.log` · `/var/log/secure` (없으면 journalctl) — SSH 성공·실패, useradd, sudo/wheel 그룹 |
+| 원격 로그인 경보 | 신뢰 목록 밖 RDP | **외부 IP** 의 SSH 로그인 (내부망 관리 접속은 기록 안 함, `remote_logon_alert_internal` 로 바꿀 수 있음) |
+| 차단 · 긴급 격리 | netsh | **iptables · ip6tables** (`DDS_BLOCK_<IP>` 주석, `DDS_ISOLATE_IN/OUT` 체인 — 해제할 때 DDS 규칙만 지움) |
+| 자동 실행 | Run 키 · 시작프로그램 (Sysmon 12·13) | cron · systemd 서비스 · authorized_keys · .bashrc · ld.so.preload (30초 비교) |
+| 웹쉘 | 웹 서버 → cmd/powershell · 웹 폴더 새 파일 | nginx · apache · php-fpm → sh/bash · 웹 폴더의 **www-data 소유** 새 파일 |
+| 원격 조종 | powershell · certutil 외부 접속 | **bash · nc · socat** 의 외부 직접 접속 (역접속) |
+| 계정 정보 탈취 | SAM 저장 · LSASS 덤프 | `/etc/shadow` 읽기 · unshadow · mimipenguin |
+| Windows 전용 | 4688 · 4104 · 4663 · Sysmon | — (Linux 는 psutil 2초 + 로그 · 파일 비교) |
+
+> **긴급 격리 주의 (Linux 서버):** 격리하면 SSH 도 끊깁니다. 끊기면 안 되는 관리 PC IP 는 `config.json` 의 `emergency_allow_ips` 에 넣으세요. 끊겼다면 서버 콘솔에서 `sudo ./emergency_release.sh`.
+> **관리 자동화:** ansible · zabbix 같은 도구가 정찰 명령을 몰아서 실행하면 오탐이 날 수 있어 `automation_allow` 에 기본으로 넣어 두었습니다. 회사 도구 이름을 더 넣으세요.
+
 ### 동작 확인 (시뮬레이션)
-대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트 / AI 에이전트 테스트 / 웹 침투 테스트 / LLM 악성코드 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
+대시보드의 **AI 도구 침입 테스트 / 해커 침입 테스트 / 이상 IP 테스트 / AI 에이전트 테스트 / 웹 침투 테스트 / LLM 악성코드 테스트 / 리눅스 서버 테스트** 버튼은 가짜 공격 기록을 탐지기에 넣어 화면이 어떻게 바뀌는지 보여 줍니다. 시뮬레이션 중의 차단·종료는 **실제로 실행되지 않고** 「[시뮬레이션]」 으로만 표시됩니다.
 
 화면 없이 규칙만 확인:
 ```bat
@@ -285,7 +316,10 @@ DDS/
 ├─ threat_feeds/         ← 위협 IP·CIDR 목록 .txt (예시 + ARTEX 관련 대역만 올라감)
 ├─ ml/                   NF-ToN-IoT-V2 학습 스크립트 (AIPFL-IDS 전처리 참고)
 ├─ docs/                 규칙 목록 · AI 분석관 설명 · 최신 위협 정보 정리 · 화면 캡처
-├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat · enable_secret_audit.ps1
+├─ run_dds.bat · check_ip.bat · emergency_release.bat · enable_cmdline_audit.bat · enable_secret_audit.ps1  (Windows)
+├─ run_dds.sh · check_ip.sh · emergency_release.sh   (Linux)
+├─ linux_fw.py · osutil.py · dashauth.py   Linux iptables 차단·격리 · 운영체제별 도우미 · 대시보드 내부망 접속(허용 IP · 비밀번호)
+├─ set_password.sh       대시보드 비밀번호 설정 (내부망 접속용)
 ├─ CHANGELOG.md          변경 기록
 ├─ LICENSE               MIT 라이선스
 └─ requirements.txt · requirements-ai.txt

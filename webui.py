@@ -1,4 +1,4 @@
-"""로컬 웹 UI 서버 (127.0.0.1 전용, 표준 라이브러리만 사용)
+"""웹 UI 서버 (기본은 127.0.0.1 전용 · config dashboard 로 내부망 접속 허용 가능, 표준 라이브러리만 사용)
 
 GET  /               대시보드 화면
 GET  /api/state      현재 상태(센서·스트림·침입 사건)
@@ -18,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import psutil
 
 from attack_taxonomy import AI_ATTACK_RULES, INTRUSION_RULES, RULE_INFO, chain, classify
+from osutil import IS_LINUX
 from responder import blocked_list, firewall_block, firewall_unblock, kill_tree
 from responder import valid_ip as _valid_ip
 
@@ -63,7 +64,7 @@ SENSORS = [
                                                      "git_spawned_unusual", "agent_secret_access"}),
 ]
 
-LOGON_KO = {"rdp": "RDP", "network": "네트워크", "interactive": "대화형", "unlock": "잠금 해제", "cached": "캐시"}
+LOGON_KO = {"rdp": "RDP", "ssh": "SSH", "network": "네트워크", "interactive": "대화형", "unlock": "잠금 해제", "cached": "캐시"}
 
 
 # ================= 알림 → 사람이 읽는 문장 =================
@@ -141,7 +142,7 @@ def describe(a):
     if r == "dev_tool_exposed":
         return f"{d.get('tool')} 포트 {d.get('laddr')} 가 외부에서 접속 가능하게 열림 (127.0.0.1 로 바꾸세요)"
     if r == "webshell_file_created":
-        by = d.get("process") or "만든 프로그램 미상"
+        by = d.get("process") or d.get("creator") or "만든 프로그램 미상"
         return f"웹 폴더에 스크립트 파일 생성: {d.get('path')} ({by})"
     if r == "object_enumeration":
         return f"{ip} 가 {d.get('window_sec')}초 안에 값만 바꾼 요청 {d.get('count')}가지 ({(d.get('pattern') or '')[:60]})"
@@ -170,7 +171,7 @@ def describe(a):
     if r == "brute_force":
         return f"{d.get('src_ip')} 에서 5분 안에 로그인 실패 {d.get('fails_5min')}회 ({who})"
     if r == "remote_rdp_logon":
-        return f"{ip} 에서 RDP 로그인 성공 ({who})"
+        return f"{ip} 에서 {LOGON_KO.get(d.get('logon_type'), 'RDP')} 로그인 성공 ({who})"
     if r == "remote_network_logon":
         return f"{ip} 에서 네트워크 로그인 성공 ({who})"
     if r == "off_hours_logon":
@@ -225,11 +226,16 @@ def build_state(mon):
     incident = None
     if any(a["severity"] == "HIGH" for a in rows):
         is_ai = any(a["rule"] in AI_ATTACK_RULES for a in rows)
-        rel = [a for a in rows if (a["rule"] in AI_ATTACK_RULES) == is_ai]
+        # AI 쪽 사건이면 같은 시간대의 로그인 침입(대입 · 원격 로그인 · 계정 생성)도 한 흐름으로 보여 줌
+        rel = rows if is_ai else [a for a in rows if a["rule"] not in AI_ATTACK_RULES]
         incident = build_incident("ai" if is_ai else "hacker", rel, local)
 
     sensors = []
+    linux_hint = {"로그인": "SSH · auth.log · useradd", "원격 접속": "외부 IP 의 SSH 로그인",
+                  "프로세스": "AI 도구 · 웹쉘 (nginx → sh)", "정찰 명령": "whoami · id · uname"}
     for name, hint, rules in SENSORS:
+        if IS_LINUX:
+            hint = linux_hint.get(name, hint)
         sev = {a["severity"] for a in rows if a["rule"] in rules}
         st = "bad" if "HIGH" in sev else ("warn" if "MEDIUM" in sev else "ok")
         sensors.append({"name": name, "hint": hint, "state": st})
@@ -238,6 +244,7 @@ def build_state(mon):
               for e in db.recent_events(8)]
     return {
         "host": mon.host,
+        "os": "linux" if IS_LINUX else "windows",
         "admin": mon.admin,
         "warnings": mon.warnings,
         "lastScan": mon.last_scan.strftime("%H:%M:%S") if mon.last_scan else None,
@@ -427,14 +434,19 @@ def build_incident(mode, rows, local=()):
         dist = next((a for a in rows if a["rule"] == "distributed_ips"), None)
         devin = next((a for a in rows if a["rule"] == "dev_tool_inbound"), None)
         enum_ = next((a for a in rows if a["rule"] == "object_enumeration"), None)
-        src = ioc_in or ua or enum_ or feed or dist or devin or scan or risky
+        login = next((a for a in rows if a["rule"] in ("remote_rdp_logon", "remote_network_logon")), None) \
+            or next((a for a in rows if a["rule"] == "brute_force"), None)
+        src = ioc_in or ua or enum_ or login or feed or dist or devin or scan or risky
         if src:
-            target_ip = d(src).get("raddr_ip") or src["who"]
+            target_ip = d(src).get("raddr_ip") or d(src).get("src_ip") or src["who"]
             sub = {"ioc_ip_match": "ARTEX 공격 IP (CrowdStrike 공개 IOC)", "threat_feed_match": "위협 목록 파일에 있는 IP",
                    "artex_user_agent": f"ARTEX 정찰 User-Agent ({d(src).get('ua')})",
                    "distributed_ips": f"IP {len(d(src).get('ips', []))}개를 바꿔 가며 :{d(src).get('lport')} 로 접속",
                    "dev_tool_inbound": f"{d(src).get('tool')} 포트로 외부 접속",
                    "object_enumeration": f"고객번호 등 값을 바꿔 가며 {d(src).get('count')}번 조회",
+                   "remote_rdp_logon": f"{LOGON_KO.get(d(src).get('logon_type'), 'RDP')} 로그인 성공 ({src['who']})",
+                   "remote_network_logon": f"네트워크 로그인 성공 ({src['who']})",
+                   "brute_force": f"비밀번호 대입 {d(src).get('fails_5min')}회 ({src['who']})",
                    "port_scan": "포트 스캔 출발지", "risky_port_inbound": f"위험 포트 :{d(src).get('lport')} 로 들어옴"}[src["rule"]]
             main = target_ip if src["rule"] != "distributed_ips" else " · ".join(d(src).get("ips", [])[:3])
             who = {"main": main, "sub": sub}
@@ -448,7 +460,7 @@ def build_incident(mode, rows, local=()):
         agent = next((a for a in rows if a["rule"] in ("agent_command_style", "retry_loop")), None)
         if heavy:
             target_pid = d(heavy).get("pid")
-            sub = {"credential_dump": "계정 정보(SAM·LSASS) 탈취 시도", "privilege_escalation": "권한 상승 도구 실행",
+            sub = {"credential_dump": "계정 정보(SAM·LSASS·/etc/shadow) 탈취 시도", "privilege_escalation": "권한 상승 도구 실행",
                    "payload_staging": "공격 파일을 들여와 실행", "artex_host_artifact": "ARTEX 가 이 PC에서 실행됨",
                    "ransomware_prep": "백업·복구 수단 삭제 (랜섬웨어 준비)", "mass_file_change": "파일 대량 암호화 의심",
                    "agent_secret_access": "AI 도구 토큰·설정 탈취 시도", "log_theft": "웹 서버 로그 파일 탈취",
@@ -509,7 +521,8 @@ def build_incident(mode, rows, local=()):
         src = lg or bf
         if src:
             target_ip = d(src).get("src_ip")
-            kind = "RDP 로그인" if src["rule"] == "remote_rdp_logon" else ("네트워크 로그인" if lg else "비밀번호 대입")
+            rk = LOGON_KO.get(d(src).get("logon_type"), "RDP")
+            kind = f"{rk} 로그인" if src["rule"] == "remote_rdp_logon" else ("네트워크 로그인" if lg else "비밀번호 대입")
             who = {"main": src["who"], "sub": f"출발지 {target_ip} · {kind}"}
         adm = next((a for a in rows if a["rule"] == "added_to_admin_group"), None)
         new = next((a for a in rows if a["rule"] == "user_created"), None)
@@ -517,7 +530,8 @@ def build_incident(mode, rows, local=()):
             what = {"main": "관리자 그룹 추가" if adm else "새 계정 생성",
                     "sub": f"{(adm or new)['who']}" + (" · 새 계정 생성 후 관리자 편입" if adm and new else "")}
         if lg:
-            where = {"main": "RDP :3389" if lg["rule"] == "remote_rdp_logon" else "네트워크 로그인",
+            where = {"main": ("SSH :22" if d(lg).get("logon_type") == "ssh" else "RDP :3389")
+                     if lg["rule"] == "remote_rdp_logon" else "네트워크 로그인",
                      "sub": "외부 IP 원격 접속"}
         intrusion = any(a["rule"] in ("brute_force", "remote_rdp_logon", "remote_network_logon",
                                       "user_created", "added_to_admin_group") for a in rows)
@@ -758,6 +772,9 @@ def update_cfg(mon, key, value, op):
 
 # ================= HTTP =================
 def make_handler(mon, port):
+    import dashauth
+    dash = dashauth.settings(mon.cfg)
+    remote = dashauth.remote_mode(dash)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     class H(BaseHTTPRequestHandler):
@@ -775,9 +792,39 @@ def make_handler(mon, port):
             self.wfile.write(body)
 
         def _host_ok(self):
+            if remote:                       # 내부망 모드: Host 대신 접속 IP 허용 목록 + 비밀번호로 막음
+                return True
             return self.headers.get("Host", "") in allowed_hosts
 
+        def _client_ok(self):
+            """내부망 모드: 허용 IP 인지, 이 서버가 아니면 비밀번호가 맞는지"""
+            ip = self.client_address[0]
+            if not remote:
+                return True
+            if not dashauth.ip_allowed(dash, ip):
+                self._send(403, "허용되지 않은 IP 입니다 (config.json dashboard.allow_ips)".encode("utf-8"),
+                           "text/plain; charset=utf-8")
+                return False
+            if dashauth.is_loopback(ip) or not dash.get("password", True):
+                return True
+            if not dashauth.has_password(dash):
+                self._send(403, "대시보드 비밀번호가 아직 없어요. 서버에서 ./set_password.sh 를 먼저 실행하세요".encode("utf-8"),
+                           "text/plain; charset=utf-8")
+                return False
+            if dashauth.check_basic(dash, self.headers.get("Authorization", "")):
+                return True
+            body = "비밀번호가 필요해요".encode("utf-8")
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="DDS", charset="UTF-8"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return False
+
         def do_GET(self):
+            if not self._client_ok():
+                return
             if not self._host_ok():
                 return self._send(403, {"error": "host"})
             path = self.path.split("?")[0]
@@ -820,6 +867,8 @@ def make_handler(mon, port):
             return self._send(404, {"error": "not found"})
 
         def do_POST(self):
+            if not self._client_ok():
+                return
             # 커스텀 헤더 토큰 → 다른 사이트에서 몰래 보내는 요청 차단
             if not self._host_ok() or self.headers.get("X-DDS-Token") != TOKEN:
                 return self._send(403, {"error": "forbidden"})
@@ -831,7 +880,7 @@ def make_handler(mon, port):
             path = self.path.split("?")[0]
             if path == "/api/simulate":
                 kind = body.get("type")
-                if kind not in ("ai", "hacker", "net", "agent", "web", "llm"):
+                if kind not in ("ai", "hacker", "net", "agent", "web", "llm", "linux"):
                     return self._send(400, {"ok": False, "msg": "type"})
                 ack(mon)
                 ok = mon.simulate(kind)
@@ -879,7 +928,8 @@ def make_handler(mon, port):
                 return self._send(404, {"error": "not found"})
             if path == "/api/emergency":
                 from responder import emergency_off, emergency_on
-                ok, msg = emergency_on(mon) if body.get("on") else emergency_off(mon)
+                keep = [] if dashauth.is_loopback(self.client_address[0]) else [self.client_address[0]]
+                ok, msg = emergency_on(mon, keep_ips=keep) if body.get("on") else emergency_off(mon)
                 return self._send(200, {"ok": ok, "msg": msg})
             if path == "/api/auto":
                 mon.responder.set_enabled(bool(body.get("enabled")))
@@ -915,6 +965,6 @@ def make_handler(mon, port):
     return H
 
 
-def serve(mon, port):
-    srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(mon, port))
+def serve(mon, port, host="127.0.0.1"):
+    srv = ThreadingHTTPServer((host, port), make_handler(mon, port))
     return srv

@@ -1,5 +1,20 @@
 # 변경 기록
 
+## 2026-10-21 — Linux 서버 지원
+
+- **실행:** `run_dds.sh`(root 로 다시 실행 · psutil 없으면 설치, 폐쇄망은 `PIP_INDEX`), `check_ip.sh`, `emergency_release.sh`
+- **로그인:** `/var/log/auth.log` · `/var/log/secure`(없으면 journalctl) — SSH 실패·성공, useradd, sudo/wheel 그룹 추가. 외부 IP 의 SSH 로그인 성공만 경보 (내부망은 `remote_logon_alert_internal`)
+- **차단 · 긴급 격리:** iptables · ip6tables (`linux_fw.py`). 격리는 DDS 체인만 추가하고 해제 때 그것만 지움, 격리 직전 `iptables-save` 를 evidence 에 저장, `emergency_allow_ips` 로 관리 IP 유지
+- **자동 실행 감시:** cron · systemd · authorized_keys · .bashrc · ld.so.preload 를 30초마다 비교 → 추가된 줄에 curl·base64·/dev/tcp·/tmp 등이 있으면 경보
+- **웹쉘:** 웹 폴더(/var/www 등)에 www-data 같은 웹 서버 계정 소유 스크립트가 생기면 HIGH
+- **규칙 이름 목록에 Linux 추가:** 셸(bash·sh·dash…), 웹 서버(nginx·apache2·httpd·php-fpm·gunicorn…), 정찰(id·uname·ss…), 원격 조종(bash·nc·socat), 계정 탈취(/etc/shadow…), 권한 상승(linpeas·pspy…), /tmp·/dev/shm 실행
+- **오탐 줄이기:** 관리 자동화(`automation_allow`: ansible·zabbix 등), 웹 서버의 정상 셸(`webserver_shell_allow`: sendmail), git 훅·자격 증명 도우미(`git_child_allow`)
+- **대시보드:** 「리눅스 서버 테스트」 버튼, Linux 용 조치 가이드(iptables·usermod·authorized_keys), Linux 센서 설명
+- **대시보드 내부망 접속 (선택):** `config.json` 의 `dashboard`(host · port · allow_ips) + `set_password.sh`. 기본은 지금처럼 127.0.0.1:8765. 긴급 격리 때 버튼을 누른 PC 와의 연결은 유지
+- `dds_agent.py` 가 SIGTERM 에도 정상 종료 (백그라운드 실행 · 중지용)
+- **테스트:** 시나리오 J(리눅스 서버 침입 — 12개 규칙 탐지) · K(리눅스 정상 운영 — 빨간 경보 0건), 실제 iptables 차단·해제·격리·해제와 cron 변경 탐지를 이 개발 환경(Linux)에서 확인
+
+
 ## 2026-10-21 — v1.1 (탐지 규칙 39 → 50개)
 
 10/19 에 정리한 최신 위협 정보([docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md))와 10/20~21 새 자료([docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md))를 반영했습니다.

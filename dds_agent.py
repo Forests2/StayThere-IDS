@@ -27,11 +27,14 @@ def load_cfg():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--alerts", action="store_true", help="최근 알림 출력")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=None, help="대시보드 포트 (기본: config dashboard.port, 없으면 8765)")
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
 
     cfg = load_cfg()
+    import dashauth
+    dash = dashauth.settings(cfg)
+    args.port = args.port or dash["port"]
     db = Storage(os.path.join(BASE, cfg["db_path"]))
     if args.alerts:
         for a in db.recent_alerts():
@@ -53,11 +56,22 @@ def main():
           + (f" · {'GPU 사용 가능' if st['gpu'] else 'CPU 빌드 → GGUF 실행 안 함 (GPU 24GB 이상 필요)'}" if st['llamaCpp'] else ""))
     mon.start()
 
-    srv = webui.serve(mon, args.port)
+    srv = webui.serve(mon, args.port, dash["host"])
     url = f"http://127.0.0.1:{args.port}"
     print(f"DDS 감시 시작: {mon.host} · 대시보드 {url} · 종료는 Ctrl+C")
+    if dashauth.remote_mode(dash):
+        print(f"내부망 접속: http://<이 서버 IP>:{args.port}  · 허용 IP {', '.join(dash['allow_ips'])}"
+              + ("" if dashauth.has_password(dash) else "  · [주의] 비밀번호가 없어서 다른 PC 는 못 들어와요 → ./set_password.sh"))
     if not args.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    import signal
+
+    def _term(*_):                      # stop.sh (SIGTERM) 도 Ctrl+C 처럼 정상 종료
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _term)
+    except (ValueError, AttributeError):
+        pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

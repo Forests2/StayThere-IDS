@@ -1,6 +1,16 @@
 {
   "db_path": "dds.db",
   "interval_sec": 2,
+  "_dashboard_note": "대시보드: 기본은 이 PC(127.0.0.1)에서만. 내부망 다른 PC 에서 보려면 host 를 0.0.0.0, allow_ips 에 허용 대역, ./set_password.sh 로 비밀번호 설정",
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "allow_ips": [
+      "127.0.0.1/32",
+      "::1/128"
+    ],
+    "password_file": "data/dashboard_auth.json"
+  },
   "work_hours": {
     "start": 8,
     "end": 20
@@ -20,7 +30,15 @@
     "gpt4all.exe",
     "koboldcpp.exe",
     "llama-server.exe",
-    "text-generation-webui.exe"
+    "text-generation-webui.exe",
+    "claude",
+    "ollama",
+    "codex",
+    "gemini",
+    "cursor",
+    "lms",
+    "llama-server",
+    "vllm"
   ],
   "ai_cmdline_keywords": [
     "langchain",
@@ -110,7 +128,10 @@
   "web_log_dirs": [
     "C:\\inetpub\\logs\\LogFiles",
     "C:\\nginx\\logs",
-    "C:\\Apache24\\logs"
+    "C:\\Apache24\\logs",
+    "/var/log/nginx",
+    "/var/log/apache2",
+    "/var/log/httpd"
   ],
   "js_burst": {
     "distinct_js": 30,
@@ -128,13 +149,32 @@
     "php.exe",
     "uwsgi.exe",
     "sqlservr.exe",
-    "oracle.exe"
+    "oracle.exe",
+    "nginx",
+    "apache2",
+    "httpd",
+    "php-fpm",
+    "php-fpm7.4",
+    "php-fpm8.0",
+    "php-fpm8.1",
+    "php-fpm8.2",
+    "php-fpm8.3",
+    "php-cgi",
+    "gunicorn",
+    "uwsgi",
+    "mysqld",
+    "mariadbd",
+    "postgres",
+    "tomcat"
   ],
   "_dev_server_note": "개발자 PC에서 python/node가 쉘을 띄우는 건 흔해서 MEDIUM으로만 알림",
   "dev_server_processes": [
     "python.exe",
     "pythonw.exe",
-    "node.exe"
+    "node.exe",
+    "python3",
+    "python",
+    "node"
   ],
   "shell_processes": [
     "cmd.exe",
@@ -149,7 +189,13 @@
     "bitsadmin.exe",
     "bash.exe",
     "wsl.exe",
-    "sh.exe"
+    "sh.exe",
+    "bash",
+    "sh",
+    "dash",
+    "zsh",
+    "ksh",
+    "busybox"
   ],
   "recon_commands": [
     "whoami.exe",
@@ -167,7 +213,22 @@
     "hostname.exe",
     "dsquery.exe",
     "wmic.exe",
-    "sc.exe"
+    "sc.exe",
+    "whoami",
+    "id",
+    "uname",
+    "hostname",
+    "hostnamectl",
+    "ifconfig",
+    "netstat",
+    "ss",
+    "w",
+    "who",
+    "last",
+    "getent",
+    "arp",
+    "route",
+    "lsb_release"
   ],
   "recon_burst": {
     "count": 4,
@@ -258,7 +319,16 @@
     "cscript.exe",
     "msbuild.exe",
     "installutil.exe",
-    "wmic.exe"
+    "wmic.exe",
+    "nc",
+    "ncat",
+    "netcat",
+    "socat",
+    "telnet",
+    "bash",
+    "sh",
+    "dash",
+    "zsh"
   ],
   "outbound_scan": {
     "ips": 15,
@@ -314,7 +384,12 @@
     "ntdsutil",
     "procdump -ma lsass",
     "procdump64 -ma lsass",
-    "procdump.exe -ma lsass"
+    "procdump.exe -ma lsass",
+    "/etc/shadow",
+    "/etc/gshadow",
+    "unshadow",
+    "mimipenguin",
+    "lazagne"
   ],
   "privesc_tools": [
     "printspoofer",
@@ -323,11 +398,20 @@
     "sweetpotato",
     "roguepotato",
     "efspotato",
-    "badpotato"
+    "badpotato",
+    "linpeas",
+    "linenum",
+    "linux-exploit-suggester",
+    "pspy",
+    "pwnkit"
   ],
   "privesc_keywords": [
     "seimpersonateprivilege",
-    "whoami /priv"
+    "whoami /priv",
+    "sudo -l",
+    "find / -perm -4000",
+    "find / -perm -u=s",
+    "getcap -r /"
   ],
   "staging_patterns": [
     "certutil -decode",
@@ -337,12 +421,23 @@
     "certutil -urlcache",
     "certutil.exe -urlcache",
     ".b64",
-    "frombase64string"
+    "frombase64string",
+    "base64 -d",
+    "base64 --decode",
+    "/dev/tcp/",
+    "chmod +x /tmp/",
+    "chmod +x /dev/shm/",
+    "chmod 777 /tmp/",
+    "| bash",
+    "|bash"
   ],
   "staging_dirs": [
     "\\users\\public\\",
     "\\windows\\temp\\",
-    "\\perflogs\\"
+    "\\perflogs\\",
+    "/tmp/",
+    "/dev/shm/",
+    "/var/tmp/"
   ],
   "distributed_ips": {
     "ips": 3,
@@ -364,7 +459,9 @@
     "enabled": true
   },
   "web_root_dirs": [
-    "C:\\inetpub\\wwwroot"
+    "C:\\inetpub\\wwwroot",
+    "/var/www",
+    "/usr/share/nginx/html"
   ],
   "web_root_markers": [
     "\\inetpub\\wwwroot\\",
@@ -372,7 +469,12 @@
     "\\webapps\\",
     "\\htdocs\\",
     "\\www\\",
-    "\\public_html\\"
+    "\\public_html\\",
+    "/var/www/",
+    "/usr/share/nginx/html/",
+    "/webapps/",
+    "/htdocs/",
+    "/public_html/"
   ],
   "web_script_ext": [
     ".aspx",
@@ -384,7 +486,11 @@
     ".jspx",
     ".php",
     ".phtml",
-    ".war"
+    ".war",
+    ".cgi",
+    ".pl",
+    ".sh",
+    ".py"
   ],
   "enum_burst": {
     "distinct": 30,
@@ -409,7 +515,8 @@
     "\\logs\\",
     "\\logfiles\\",
     "\\log\\",
-    ".log"
+    ".log",
+    "/var/log/"
   ],
   "archive_markers": [
     "compress-archive",
@@ -423,7 +530,13 @@
     "xcopy",
     "robocopy",
     "copy ",
-    "zip "
+    "zip ",
+    "tar ",
+    "gzip ",
+    "scp ",
+    "rsync ",
+    "curl -t",
+    "curl --upload"
   ],
   "script_hosts": [
     "wscript.exe",
@@ -437,7 +550,9 @@
     "outlook.exe",
     "onenote.exe",
     "msaccess.exe",
-    "mspub.exe"
+    "mspub.exe",
+    "soffice.bin",
+    "soffice"
   ],
   "llm_exec_window_sec": 15,
   "autorun_markers": [
@@ -446,7 +561,18 @@
     "\\winlogon\\shell",
     "\\winlogon\\userinit",
     "\\policies\\explorer\\run",
-    "\\start menu\\programs\\startup\\"
+    "\\start menu\\programs\\startup\\",
+    "/etc/cron",
+    "/var/spool/cron",
+    "/etc/systemd/system/",
+    "/.config/systemd/user/",
+    "/etc/rc.local",
+    "/etc/profile.d/",
+    "/.bashrc",
+    "/.bash_profile",
+    "/.profile",
+    "/authorized_keys",
+    "/etc/ld.so.preload"
   ],
   "suspicious_autorun_values": [
     ".vbs",
@@ -464,7 +590,19 @@
     "mshta",
     "powershell",
     "-enc",
-    "rundll32"
+    "rundll32",
+    "/tmp/",
+    "/dev/shm/",
+    "curl ",
+    "wget ",
+    "base64",
+    "/dev/tcp/",
+    "nc ",
+    "bash -i",
+    "python -c",
+    "python3 -c",
+    "authorized_keys",
+    "ld.so.preload"
   ],
   "ransomware_patterns": [
     "vssadmin delete shadows",
@@ -580,7 +718,16 @@
     "rundll32.exe",
     "regsvr32.exe",
     "certutil.exe",
-    "bitsadmin.exe"
+    "bitsadmin.exe",
+    "bash",
+    "sh",
+    "dash",
+    "zsh",
+    "python3",
+    "perl",
+    "curl",
+    "wget",
+    "nc"
   ],
   "_secret_note": "AI 도구 토큰 · MCP 설정 경로 (인포스틸러 대상). 실제 PC 의 경로를 보고 더하거나 빼세요",
   "secret_markers": [
@@ -595,7 +742,16 @@
     "\\.aws\\credentials",
     "\\.ssh\\id_",
     "\\.azure\\",
-    "\\.kube\\config"
+    "\\.kube\\config",
+    "/.claude/.credentials",
+    "/.claude.json",
+    "/.cursor/mcp.json",
+    "/.codex/auth.json",
+    "/.gemini/",
+    "/.aws/credentials",
+    "/.ssh/id_",
+    "/.kube/config",
+    "/.config/claude/"
   ],
   "secret_readers_allow": [
     "claude.exe",
@@ -614,7 +770,19 @@
     "az.exe",
     "kubectl.exe",
     "python.exe",
-    "cowork-svc.exe"
+    "cowork-svc.exe",
+    "claude",
+    "node",
+    "codex",
+    "cursor",
+    "code",
+    "git",
+    "ssh",
+    "python3",
+    "aws",
+    "kubectl",
+    "sshd",
+    "gemini"
   ],
   "exfil_verbs": [
     "copy ",
@@ -629,7 +797,12 @@
     "7z",
     "type ",
     "get-content",
-    "gc "
+    "gc ",
+    "cat ",
+    "cp ",
+    "scp ",
+    "base64 ",
+    "xxd "
   ],
   "notify": {
     "_note": "침입 알림을 PC 밖으로 보냄 (Logpresso · syslog 서버 · 사내 웹훅). 기본 꺼짐",
@@ -653,5 +826,50 @@
     "burst": 3,
     "window_sec": 600,
     "history_days": 30
-  }
+  },
+  "_lolbin_note": "Windows 시스템 도구 + Linux 원격 조종에 쓰이는 도구(nc·socat·bash 직접 소켓). curl·wget 은 정상 업데이트에도 써서 넣지 않음",
+  "git_child_allow": [
+    ".git/hooks/",
+    "credential",
+    "git-",
+    "ssh ",
+    "gpg",
+    "less",
+    "pager",
+    "editor",
+    "vim",
+    "nano",
+    "git rev-parse",
+    "git config"
+  ],
+  "webserver_shell_allow": [
+    "sendmail",
+    "/usr/sbin/sendmail",
+    "postdrop"
+  ],
+  "_linux_note": "Linux: SSH 로그인은 외부 IP 일 때만 경보(내부망 관리 접속은 기록만). 내부망도 보려면 remote_logon_alert_internal=true. 긴급 격리 때 끊기면 안 되는 관리 IP 는 emergency_allow_ips 에",
+  "remote_logon_alert_internal": false,
+  "emergency_allow_ips": [],
+  "_automation_note": "회사 관리 자동화 아래에서 실행된 정찰 명령·기계 형식 명령은 침입으로 안 봄 (조상 프로세스 이름·명령줄에 이 단어가 있으면). 회사 환경에 맞게 추가",
+  "automation_allow": [
+    "ansible",
+    "salt-minion",
+    "puppet",
+    "chef-client",
+    "zabbix_agent",
+    "zabbix_agentd",
+    "telegraf",
+    "node_exporter",
+    "datadog-agent",
+    "nessus"
+  ],
+  "web_server_users": [
+    "www-data",
+    "nginx",
+    "apache",
+    "httpd",
+    "tomcat",
+    "http",
+    "nobody"
+  ]
 }
