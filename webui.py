@@ -39,7 +39,7 @@ HACKER_RULES = {"brute_force", "remote_rdp_logon", "remote_network_logon", "off_
 SUSPICIOUS_RULES = {"threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound",
                     "odd_port_outbound", "new_inbound_ip", "port_scan", "ioc_ip_match", "brute_force",
                     "remote_rdp_logon", "remote_network_logon", "distributed_ips", "artex_user_agent",
-                    "js_asset_burst", "dev_tool_inbound"}
+                    "js_asset_burst", "dev_tool_inbound", "c2_beacon"}
 
 # 침입 흔적이 아니라 '확인이 필요한 활동' 인 규칙
 CHECK_RULES = {"ai_api_connection", "ai_web_usage", "ai_program_started", "ai_script_started",
@@ -62,13 +62,14 @@ SENSORS = [
     ("악성코드 · 랜섬웨어", "LLM 악성코드 · 자동 실행 · 백업 삭제", {"llm_malware_pattern", "llm_then_exec", "autorun_change",
                                                      "ransomware_prep", "mass_file_change", "package_install_exec",
                                                      "git_spawned_unusual", "agent_secret_access"}),
+    ("중요 파일 · 비콘", "passwd · sudoers · hosts · 주기 접속", {"critical_file_change", "browser_hijack", "c2_beacon"}),
 ]
 
 LOGON_KO = {"rdp": "RDP", "ssh": "SSH", "network": "네트워크", "interactive": "대화형", "unlock": "잠금 해제", "cached": "캐시"}
 
 
 # ================= 알림 → 사람이 읽는 문장 =================
-def describe(a):
+def _describe(a):
     r, d, who = a["rule"], a["detail"] if isinstance(a["detail"], dict) else {}, a.get("who") or ""
     ip = d.get("raddr_ip") or d.get("src_ip") or ""
     if r == "port_scan":
@@ -180,7 +181,27 @@ def describe(a):
         return f"새 계정 생성: {who}"
     if r == "added_to_admin_group":
         return f"관리자 그룹에 추가: {who}"
+    if r == "critical_file_change":
+        ch = {"created": "새로 생김", "deleted": "삭제됨", "modified": "바뀜"}.get(d.get("change"), "바뀜")
+        added = (d.get("value") or "").strip().splitlines()
+        removed = (d.get("removed") or "").strip().splitlines()
+        what = f" 추가: {added[0][:60]}" if added else (f" 삭제: {removed[0][:60]}" if removed else "")
+        return f"중요 파일 {d.get('path')} {ch}{what}" + (f" · 권한 {d.get('mode')}" if d.get("mode") else "")
+    if r == "browser_hijack":
+        return f"브라우저 탈취 의심: {who} ({', '.join(d.get('reasons', [])[:2])})"
+    if r == "c2_beacon":
+        return f"{d.get('process') or '?'} 가 {ip}:{d.get('raddr_port')} 로 {d.get('median_gap')}초 간격 새 연결 {d.get('count')}회 (주기 보고)"
     return f"{r} {who}"
+
+
+def describe(a):
+    """경보 한 줄 설명. v1.2: 묶인 경보는 뒤에 (×N · 마지막 시각)"""
+    text = _describe(a)
+    n = a.get("count") or 1
+    if n > 1:
+        last = (a.get("last_ts") or "")[11:19]
+        text += f"  (×{n}{' · 마지막 ' + last if last else ''})"
+    return text
 
 
 def event_text(e):
@@ -454,7 +475,8 @@ def build_incident(mode, rows, local=()):
         recon = next((a for a in rows if a["rule"] == "recon_burst"), None)
         prio = ("ransomware_prep", "mass_file_change", "credential_dump", "agent_secret_access", "log_theft",
                 "webshell_file_created", "llm_then_exec", "llm_malware_pattern", "privilege_escalation",
-                "payload_staging", "package_install_exec", "git_spawned_unusual", "autorun_change", "artex_host_artifact")
+                "payload_staging", "package_install_exec", "git_spawned_unusual", "autorun_change", "artex_host_artifact",
+                "critical_file_change", "browser_hijack")
         heavy = min((a for a in rows if a["rule"] in prio),     # 가장 위험한 단계 · HIGH 우선
                     key=lambda a: (a["severity"] != "HIGH", prio.index(a["rule"]), a["id"]), default=None)
         agent = next((a for a in rows if a["rule"] in ("agent_command_style", "retry_loop")), None)
@@ -466,7 +488,8 @@ def build_incident(mode, rows, local=()):
                    "agent_secret_access": "AI 도구 토큰·설정 탈취 시도", "log_theft": "웹 서버 로그 파일 탈취",
                    "webshell_file_created": "웹 폴더에 웹쉘 파일 생성", "llm_then_exec": "LLM 지시를 받아 명령 실행",
                    "llm_malware_pattern": "LLM 을 부르는 악성코드", "package_install_exec": "설치 스크립트가 외부에서 내려받음",
-                   "git_spawned_unusual": "git 설정을 통한 명령 실행", "autorun_change": "자동 실행 등록 (지속성)"}[heavy["rule"]]
+                   "git_spawned_unusual": "git 설정을 통한 명령 실행", "autorun_change": "자동 실행 등록 (지속성)",
+                   "critical_file_change": "중요 파일 변조 (계정·sudo·SSH 키·hosts)", "browser_hijack": "브라우저를 원격 조종 옵션으로 탈취"}[heavy["rule"]]
             what = {"main": d(heavy).get("name") or d(heavy).get("process") or heavy["who"],
                     "sub": sub + (" · AI 에이전트식 명령" if agent else "")}
         elif agent:
@@ -487,11 +510,13 @@ def build_incident(mode, rows, local=()):
             what = {"main": d(osc).get("process") or osc["who"], "sub": f"이 PC가 {d(osc).get('count')}개 IP로 접속 시도 (내부 확산 의심)"}
         out = next((a for a in rows if a["rule"] == "ioc_ip_match" and d(a).get("kind") == "outbound"), None)
         api = next((a for a in rows if a["rule"] == "ai_api_connection"), None)
-        odd = next((a for a in rows if a["rule"] in ("lolbin_outbound", "odd_port_outbound")), None)
+        odd = next((a for a in rows if a["rule"] == "c2_beacon"), None) \
+            or next((a for a in rows if a["rule"] in ("lolbin_outbound", "odd_port_outbound")), None)
         if out:
             where = {"main": f"{d(out).get('raddr_ip')}:{d(out).get('raddr_port')}", "sub": "ARTEX 서버로 역접속 시도"}
         elif odd:
-            where = {"main": f"{d(odd).get('raddr_ip')}:{d(odd).get('raddr_port')}", "sub": "수상한 외부 서버로 나가는 연결"}
+            where = {"main": f"{d(odd).get('raddr_ip')}:{d(odd).get('raddr_port')}",
+                     "sub": "주기적으로 보고하는 외부 서버 (C2 비콘)" if odd["rule"] == "c2_beacon" else "수상한 외부 서버로 나가는 연결"}
             if not who:
                 target_ip = d(odd).get("raddr_ip")
                 who = {"main": target_ip, "sub": "이 PC가 접속한 수상한 외부 IP"}
@@ -560,7 +585,7 @@ def build_incident(mode, rows, local=()):
                                          "artex_host_artifact", "agent_command_style", "retry_loop",
                                          "log_theft", "llm_malware_pattern", "llm_then_exec", "ransomware_prep",
                                          "mass_file_change", "git_spawned_unusual", "package_install_exec",
-                                         "agent_secret_access")
+                                         "agent_secret_access", "browser_hijack", "c2_beacon")
                         and d(a).get("pid")}),
         "lastId": rows[-1]["id"],
         "firstId": rows[0]["id"],
@@ -880,7 +905,7 @@ def make_handler(mon, port):
             path = self.path.split("?")[0]
             if path == "/api/simulate":
                 kind = body.get("type")
-                if kind not in ("ai", "hacker", "net", "agent", "web", "llm", "linux"):
+                if kind not in ("ai", "hacker", "net", "agent", "web", "llm", "linux", "persist"):
                     return self._send(400, {"ok": False, "msg": "type"})
                 ack(mon)
                 ok = mon.simulate(kind)

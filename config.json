@@ -449,7 +449,10 @@
     "11434": "Ollama",
     "1234": "LM Studio",
     "7860": "Gradio / text-generation-webui",
-    "8188": "ComfyUI"
+    "8188": "ComfyUI",
+    "9222": "Chrome 원격 디버깅(CDP)",
+    "9229": "Node inspector",
+    "9515": "ChromeDriver"
   },
   "sysmon": {
     "enabled": true
@@ -871,5 +874,82 @@
     "tomcat",
     "http",
     "nobody"
+  ],
+  "_v12_note": "v1.2 (2026-10-22): 기록 보관 · 경보 묶기 · 중요 파일 변조 · 브라우저 탈취 · C2 비콘",
+  "retention": {
+    "log_days": 30,
+    "db_days": 30
+  },
+  "alert_group_sec": 600,
+  "critical_files_linux": [
+    "/etc/passwd",
+    "/etc/shadow",
+    "/etc/group",
+    "/etc/sudoers",
+    "/etc/sudoers.d",
+    "/etc/hosts",
+    "/etc/ld.so.preload",
+    "/etc/ssh/sshd_config",
+    "/etc/ssh/sshd_config.d",
+    "/etc/pam.d",
+    "~/.ssh/authorized_keys"
+  ],
+  "critical_files_windows": [
+    "%SystemRoot%\\System32\\drivers\\etc\\hosts",
+    "%SystemRoot%\\System32\\Tasks"
+  ],
+  "browser_hijack_flags": [
+    "--remote-debugging-address=0.0.0.0",
+    "--remote-debugging-address=::",
+    "--disable-web-security",
+    "--ignore-certificate-errors",
+    "--user-data-dir=c:\\users\\public",
+    "--user-data-dir=c:\\windows\\temp",
+    "--user-data-dir=/tmp"
+  ],
+  "beacon": {
+    "count": 6,
+    "min_gap_sec": 30,
+    "jitter": 0.2
+  },
+  "beacon_allow": [
+    "svchost.exe",
+    "msmpeng.exe",
+    "onedrive.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "slack.exe",
+    "outlook.exe",
+    "discord.exe",
+    "kakaotalk.exe",
+    "zoom.exe",
+    "spotify.exe",
+    "steam.exe",
+    "dropbox.exe",
+    "googledrivefs.exe",
+    "searchhost.exe",
+    "widgetservice.exe",
+    "msedgewebview2.exe",
+    "explorer.exe",
+    "officeclicktorun.exe",
+    "wuauclt.exe",
+    "usoclient.exe",
+    "musnotification.exe",
+    "ntpd",
+    "chronyd",
+    "systemd-timesyncd",
+    "snapd",
+    "packagekitd",
+    "unattended-upgrade",
+    "node_exporter",
+    "telegraf",
+    "zabbix_agentd",
+    "zabbix_agent2",
+    "datadog-agent",
+    "filebeat",
+    "fluent-bit",
+    "rsyslogd",
+    "sssd",
+    "ntpdate"
   ]
 }

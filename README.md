@@ -4,7 +4,7 @@
 ![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg)
 ![Linux](https://img.shields.io/badge/Linux-server-FCC624.svg)
-![Rules 50](https://img.shields.io/badge/detection%20rules-50-red.svg)
+![Rules 53](https://img.shields.io/badge/detection%20rules-53-red.svg)
 
 **[English summary below](#english-summary)**
 
@@ -16,6 +16,15 @@
 ![실시간 감시 — AI 해킹 도구 침입 경보](docs/images/02_ai_alert.png)
 
 ## 📌 업데이트 내역
+
+### 2026-10-22 — v1.2 · 중요 파일 변조 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 기록 보관 (탐지 규칙 50 → 53개)
+- **중요 파일 변조 감시** (`critical_file_change`) — `/etc/passwd`·`shadow`·`sudoers`·`ld.so.preload`·`authorized_keys`·`sshd_config`·`pam.d`, Windows `hosts`·예약 작업 폴더를 30초마다 비교해 추가·삭제된 줄과 권한 변경을 경보
+- **브라우저 탈취** (`browser_hijack`) — cmd·powershell·wscript·Temp 의 프로그램이 브라우저를 원격 조종 옵션으로 띄우거나, 디버깅 포트를 외부에 열거나(`--remote-debugging-address`), Temp 의 확장 프로그램을 강제 로드. 내 AI 도구(Playwright 등) 아래는 제외. Chrome 원격 디버깅(9222)·Node inspector(9229)·ChromeDriver(9515) 포트를 AI 개발 도구 포트 목록에 추가
+- **C2 비콘** (`c2_beacon`) — 같은 프로그램이 같은 외부 IP:포트로 새 연결을 거의 같은 간격으로 반복(6회 · 30초 이상 · 편차 20% 이내). 오래 붙어 있는 연결 1개, 브라우저·메신저·동기화·모니터링 에이전트(`beacon_allow`)는 제외
+- **경보 묶기** — 같은 규칙·대상·IP 경보가 10분 안에 반복되면 새 줄 대신 **×N** 횟수만 올림 (포트 스캔 한 번에 경보 수십 줄 → 1줄). 「감시 화면으로」 뒤의 새 경보는 새 줄
+- **기록 보관** — 화면 출력을 `logs/dds_날짜.log` 에 날짜별로 기록, 30일 지난 로그 파일과 `dds.db` 기록 자동 삭제 (`retention`)
+- **대시보드** — 센서 「중요 파일 · 비콘」, 「자리 잡기 테스트」 버튼 (sudoers → authorized_keys → ld.so.preload → 브라우저 탈취 → 비콘)
+- **테스트** — 시나리오 L(자리 잡기 — 3개 규칙) · M(v1.2 정상 운영 — 오래 붙은 연결 · Teams 주기 접속 · Playwright → 빨간 경보 0건). 중요 파일 변조는 이 개발 환경(Linux)에서 `/etc/hosts`·`/etc/ld.so.preload` 를 실제로 바꿔 확인
 
 ### 2026-10-21 — v1.1 · 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 (탐지 규칙 39 → 50개)
 - **금융권 공격 유형** — 웹 폴더에 웹쉘 파일 생성(`webshell_file_created`), 고객번호 등 값만 바꾼 대량 조회(`object_enumeration`), 웹 서버 아래 로그 폴더 압축·복사(`log_theft`)
@@ -49,9 +58,10 @@
 **StayThere-IDS (DDS)** is a Windows endpoint agent that detects **who broke into a PC and which program — including AI-driven hacking tools — did what**, and blocks confirmed intrusions immediately.
 It was built after the **ARTEX** campaign (Sep–Oct 2026), where an LLM-driven autonomous pentest tool was used against South Korean financial institutions.
 
-- **50 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
+- **53 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
 - **ARTEX (original & Korean fork `artex-ko`)** — host artifacts (`artex`, `artex_token`, `autumn27/artex`), recon User-Agents in web-server logs (`artex-enrich/1.0`, `spa-api-recon`)
 - **AI-agent behavior** — machine-parsable command style (`echo ---`, `head`, `2>nul`), fail-fix-retry loops, credential dumping (SAM/LSASS), Potato-style privilege escalation, payload staging (certutil decode, chunk joining, execution from Public/Temp), IP rotation, exposed AI dev tools (Jupyter/Ollama)
+- **v1.2 (2026-10-22)** — critical-file tampering (`passwd`/`sudoers`/`ld.so.preload`/`authorized_keys`/`hosts`/scheduled-task folder, line-level diff), browser hijacking (shell- or script-launched browsers with remote-debugging flags, CDP port exposed to the network, side-loaded extensions from Temp), C2 beaconing (regular-interval new connections to the same host), alert grouping (×N instead of dozens of rows), dated log files with 30-day retention for logs and the SQLite DB
 - **v1.1 (2026-10-21)** — web-shell file drops, customer-ID enumeration in web logs, log theft (the 2026 Korean bank attack patterns); LLM-querying malware (PROMPTSTEAL/PROMPTFLUX style: script hosts or Office calling LLM APIs, commands right after an LLM call, autorun changes, PowerShell 4104); GitSpawn-style git execution; AI-tool token/MCP-config theft; ransomware prep (shadow-copy deletion, mass `*.docx.xxx` files); malicious install scripts; syslog/webhook alert forwarding
 - **"Is this an AI attack program?"** — machine-speed evidence (median step gap, duration) + AI evidence (direct IOCs vs. behavioral traits), calibrated on public 2026 AI-agent intrusion cases
 - **Collection** — psutil (2 s), Security events 4624–4732 and **4688 with command line**, **Sysmon 1/3/22** if installed, IIS/nginx/Apache logs if present, plus a **per-PC baseline** of normal behavior (pure Python)
@@ -136,9 +146,11 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **웹 서버 공격 (v1.1)** | 웹 폴더에 웹쉘 파일 생성 · 고객번호 등 값만 바꾼 대량 조회 · 웹 서버 아래 로그 압축·복사 — 2026 금융권 공격 유형 |
 | **LLM 을 부르는 악성코드 (v1.1)** | 스크립트 호스트·Office 의 LLM API 접속, LLM 접속 직후 명령 실행, Run 키·시작프로그램 등록, PowerShell 스크립트 블록(4104) 검사 |
 | **랜섬웨어 · 공급망 · AI 코딩 도구 (v1.1)** | 백업·복구 수단 삭제, 문서 대량 암호화 흔적, npm·pip 설치 중 다운로드, git 설정을 통한 실행(GitSpawn), AI 도구 토큰·MCP 설정 탈취 |
+| **중요 파일 · 브라우저 · 비콘 (v1.2)** | passwd·sudoers·ld.so.preload·authorized_keys·hosts 변조(추가·삭제된 줄 표시), 셸·스크립트가 브라우저를 원격 조종 옵션으로 띄움, 같은 외부 서버로 일정 간격 반복 접속(C2 비콘) |
+| **경보 묶기 · 기록 보관 (v1.2)** | 같은 경보 반복은 ×N 으로 한 줄, `logs/dds_날짜.log` 날짜별 기록, 30일 지난 로그·DB 기록 자동 삭제 |
 | **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시. **syslog(Logpresso 등)·웹훅으로 PC 밖에도 전송 가능** (v1.1, 기본 꺼짐) |
 
-전체 탐지 규칙 50개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
+전체 탐지 규칙 53개와 기준값은 **[docs/DETECTION_RULES.md](docs/DETECTION_RULES.md)** 에 있습니다.
 
 ---
 
@@ -166,6 +178,10 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 |---|---|
 | ![웹 침투](docs/images/13_web_attack_alert.png) | ![LLM 악성코드](docs/images/14_llm_malware_alert.png) |
 
+| 자리 잡기 테스트 (v1.2) — 중요 파일 변조 · 브라우저 탈취 · C2 비콘 |
+|---|
+| ![자리 잡기](docs/images/15_persist_alert.png) |
+
 | 조치 가이드 | 긴급 차단 중 |
 |---|---|
 | ![조치 가이드](docs/images/10_guide.png) | ![긴급 차단](docs/images/11_emergency.png) |
@@ -181,7 +197,7 @@ flowchart LR
     C2["네트워크 연결<br/>(psutil)"] --> M
     C3["로그인 · 명령줄 기록<br/>(Security 4624~4732 · 4688)"] --> M
     C4["Sysmon 1·3·11·12·13·22 · PowerShell 4104<br/>웹 서버 로그 (있을 때)"] --> M
-    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 50개"]
+    M["monitor.py<br/>2초 주기 수집"] --> D["detectors.py<br/>탐지 규칙 53개"]
     D --> DB[("dds.db<br/>SQLite")]
     D --> R["responder.py<br/>알림 · 자동 차단 · 긴급 격리"]
     R --> FW["Windows 방화벽<br/>(netsh)"]
@@ -299,16 +315,17 @@ DDS/
 ├─ dds_agent.py          실행 진입점 (감시 시작 + 대시보드 서버)
 ├─ monitor.py            수집 루프 · 침입 시뮬레이션 시나리오 4종
 ├─ collectors.py         프로세스 · 네트워크 · 로그인 기록 · 4688 명령줄 · Sysmon · 웹 로그 수집
-├─ detectors.py          탐지 규칙 50개 (+ 위협 목록 파일 대조)
+├─ detectors.py          탐지 규칙 53개 (+ 위협 목록 파일 대조)
 ├─ attack_taxonomy.py    규칙 설명 · AIPFL-IDS 공격 분류 연결표
 ├─ responder.py          알림 · 자동 대응 · 방화벽 차단/해제 · 긴급 격리
 ├─ llm.py                AI 분석관 (API · GGUF 동시 실행, 폴더 감시, 진행 상황)
 ├─ webui.py              대시보드 서버 · API (127.0.0.1 전용)
 ├─ baseline.py           평소 패턴 학습 (처음 보는 행동 → 확인 필요)
-├─ storage.py            SQLite 저장소
+├─ storage.py            SQLite 저장소 (경보 묶기 횟수 · 오래된 기록 정리)
+├─ logfile.py            날짜별 로그 파일 logs/dds_날짜.log · 오래된 로그 삭제 (v1.2)
 ├─ ip_check.py           외부 IP 조사 (CMD 겸용)
 ├─ emergency_release.py  긴급 차단 비상 해제
-├─ test_artex_sim.py     규칙 테스트 (시나리오 A~I: ARTEX · AI 에이전트 · 한국어판 · 웹 침투 · LLM 악성코드 · AI 코딩 도구 · 오탐 · 파서)
+├─ test_artex_sim.py     규칙 테스트 (시나리오 A~M: ARTEX · AI 에이전트 · 한국어판 · 웹 침투 · LLM 악성코드 · AI 코딩 도구 · 리눅스 · 자리 잡기 · 오탐 · 파서)
 ├─ tools/                규칙 문서 자동 생성 (gen_rules_doc.py)
 ├─ config.json           탐지 기준 · ARTEX IOC · 감시 목록
 ├─ static/               대시보드 화면 (index.html, A1_D.jpg)
@@ -325,7 +342,7 @@ DDS/
 └─ requirements.txt · requirements-ai.txt
 ```
 
-실행하면 생기는 `dds.db`(수집 기록), `evidence/`(증거 파일), `llm_config.json`(API 키)은 **실제 PC 정보가 들어 있어 `.gitignore` 로 올리지 않습니다.**
+실행하면 생기는 `dds.db`(수집 기록), `logs/`(날짜별 로그), `evidence/`(증거 파일), `llm_config.json`(API 키)은 **실제 PC 정보가 들어 있어 `.gitignore` 로 올리지 않습니다.**
 
 ---
 
@@ -352,6 +369,9 @@ DDS/
 | `script_hosts` · `office_processes` · `llm_exec_window_sec` | LLM 을 부르는 악성코드 판단 (v1.1) |
 | `ransomware_patterns` · `mass_file` · `package_install_markers` · `secret_markers` | 랜섬웨어 · 공급망 · AI 도구 토큰 경로 (v1.1, 경로는 실제 PC 에서 확인 후 조정) |
 | `notify` | 침입 알림 외부 전송: `syslog`(host·port) · `webhook`(url) · `min_severity` — **기본 꺼짐** (v1.1) |
+| `retention` · `alert_group_sec` | 로그 파일·DB 보관 일수(기본 30일, 0 = 안 지움) · 같은 경보 묶는 시간(기본 600초) (v1.2) |
+| `critical_files_linux` · `critical_files_windows` | 변조를 감시할 중요 파일·폴더 (`~/` 는 모든 계정 홈) (v1.2) |
+| `browser_hijack_flags` · `beacon` · `beacon_allow` | 브라우저 탈취 판단 옵션 · 비콘 기준(6회 · 30초 · 편차 0.2) · 비콘에서 제외할 프로그램 (v1.2) |
 
 ---
 
@@ -381,9 +401,16 @@ DDS/
 
 2026-10-19 에 정리한 계획([docs/THREAT_NOTES_2026-10-19.md](docs/THREAT_NOTES_2026-10-19.md))을 모두 반영했습니다 — 웹쉘 파일 생성 · 고객번호 열거 · 로그 탈취 · LLM 을 부르는 악성코드 · Run 키 · PowerShell 4104 · AI 도구 토큰 보호 · GitSpawn · 랜섬웨어 준비 · 대량 파일 암호화 · 설치 스크립트 · 알림 외부 전송. 10/20~21 새 자료는 [docs/THREAT_NOTES_2026-10-21.md](docs/THREAT_NOTES_2026-10-21.md).
 
-### v1.2 후보
+### v1.2 — 반영 완료 (2026-10-22)
+
+중요 파일 변조 감시 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 날짜별 로그와 30일 보관. 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
+
+### v1.3 후보
 | 항목 | 이유 |
 |---|---|
+| **auditd 연동 (Linux)** | 2초 폴링은 1초 안에 끝나는 명령을 놓칠 수 있음 — auditd 기록을 읽으면 빠짐없이 잡음 |
+| **일일 요약 리포트** | 하루 한 번 경보 건수·차단 IP·상위 규칙을 파일(또는 웹훅)로 |
+| **README 영문판 분리** | 해외 검색 노출 |
 | **Windows 실제 PC 검증** | 4688·4104·4663·Sysmon 읽기, netsh 차단·해제, 긴급 격리, 알림 전송을 실제 Windows 에서 확인 (지금까지는 시뮬레이션) |
 | **오탐 조정** | 며칠 운영한 기록으로 기준값 조정, AI 도구 토큰 경로(`secret_markers`) 실제 확인 |
 | **ARTEX PRO · RedAgents 지표** | 10/16 발표된 상용 플랫폼의 접속 주소·출발지 정보가 공개되면 반영 |

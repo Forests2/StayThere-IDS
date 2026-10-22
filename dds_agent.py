@@ -38,8 +38,15 @@ def main():
     db = Storage(os.path.join(BASE, cfg["db_path"]))
     if args.alerts:
         for a in db.recent_alerts():
-            print(a["ts"], a["severity"], a["rule"], a["who"], "SIM" if a["sim"] else "")
+            print(a["ts"], a["severity"], a["rule"], a["who"], f"×{a['count']}" if a.get("count", 1) > 1 else "",
+                  "SIM" if a["sim"] else "")
         return
+    import logfile
+    log_dir = logfile.install(BASE, cfg)
+    ret = cfg.get("retention") or {}
+    pruned = db.prune(int(ret.get("db_days", 30) or 0), vacuum=True)
+    print(f"기록 보관: 로그 파일 {ret.get('log_days', 30)}일 ({log_dir or '파일 기록 꺼짐'}) · DB {ret.get('db_days', 30)}일"
+          + (f" · 오래된 기록 {pruned}건 정리" if pruned else "") + f" · dds.db {db.db_size() // 1024 // 1024}MB")
 
     import webui
     mon = Monitor(cfg, db)

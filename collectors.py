@@ -13,6 +13,7 @@ Linux
  - 자동 실행: cron · systemd 서비스 · authorized_keys · .bashrc · ld.so.preload 변경 (30초 비교)
 """
 import glob
+import hashlib
 import ntpath
 import os
 import re
@@ -337,7 +338,88 @@ class LinuxAuthCollector:
 
 
 LINUX_AUTORUN = ["/etc/crontab", "/etc/cron.d", "/var/spool/cron", "/etc/systemd/system", "/etc/rc.local",
-                 "/etc/profile.d", "/etc/ld.so.preload", "/root/.ssh/authorized_keys", "/root/.bashrc"]
+                 "/etc/profile.d", "/root/.bashrc"]
+
+
+def _homes():
+    out = ["/root"] if os.path.isdir("/root") else []
+    if os.path.isdir("/home"):
+        out += [os.path.join("/home", h) for h in os.listdir("/home")]
+    return out
+
+
+class CriticalFileCollector:
+    """v1.2 — 중요 파일 변조 감시: /etc/passwd · sudoers · ld.so.preload · authorized_keys · hosts 등을
+    30초마다 비교 → 바뀐 줄·추가된 파일·지워진 파일·권한 변경 (config critical_files_linux / critical_files_windows)
+    "~/" 로 시작하는 항목은 /root 와 /home/* 모든 계정에 적용"""
+
+    def __init__(self, paths):
+        self.paths = [p for p in (paths or []) if p]
+        self.ok = bool(self.paths)
+        self.seen = self._snapshot() if self.ok else {}
+
+    def _expand(self):
+        out = []
+        for p in self.paths:
+            if p.startswith("~/"):
+                out += [os.path.join(h, p[2:]) for h in _homes()]
+            else:
+                out.append(os.path.expandvars(p))
+        files = []
+        for p in out:
+            if os.path.isdir(p):
+                for root, _, names in os.walk(p):
+                    files += [os.path.join(root, f) for f in names]
+                    if len(files) > 2000:
+                        break
+            else:
+                files.append(p)          # 없는 파일도 넣어 둠 → 새로 생기면 잡힘 (ld.so.preload 처럼)
+        return files[:2000]
+
+    def _snapshot(self):
+        snap = {}
+        for p in self._expand():
+            try:
+                st = os.stat(p)
+            except OSError:
+                snap[p] = None
+                continue
+            try:
+                with open(p, "rb") as f:
+                    body = f.read(262144)
+                text = body.decode("utf-8", "ignore") if st.st_size <= 262144 else hashlib.sha256(body).hexdigest()
+            except OSError:
+                text = ""
+            snap[p] = (text, st.st_mode & 0o7777, st.st_uid if hasattr(st, "st_uid") else 0)
+        return snap
+
+    def collect(self):
+        if not self.ok:
+            return []
+        now = self._snapshot()
+        out = []
+        for p, cur in now.items():
+            old = self.seen.get(p, None)
+            if old == cur or (old is None and cur is None):
+                continue
+            ev = {"path": p, "process": "", "exe": "", "source": "integrity"}
+            if cur is None:
+                ev["change"] = "deleted"
+            elif old is None:
+                ev["change"] = "created"
+                ev["value"] = cur[0][:2000]
+            else:
+                ev["change"] = "modified"
+                prev, text = set(old[0].splitlines()), cur[0].splitlines()
+                ev["value"] = "\n".join(ln for ln in text if ln.strip() and ln not in prev)[:2000]
+                ev["removed"] = "\n".join(ln for ln in old[0].splitlines() if ln.strip() and ln not in set(text))[:1000]
+                if old[1] != cur[1]:
+                    ev["mode"] = f"{old[1]:o} → {cur[1]:o}"
+                if old[2] != cur[2]:
+                    ev["owner_changed"] = True
+            out.append(("file", ev))
+        self.seen = now
+        return out
 
 
 class LinuxAutorunCollector:

@@ -3,6 +3,7 @@ dds.db
 dds.db-*
 evidence/
 data/
+logs/
 
 # ── API 키가 들어 있는 설정 ──
 llm_config.json

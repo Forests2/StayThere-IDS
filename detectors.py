@@ -45,6 +45,10 @@
   git_spawned_unusual      git 이 셸·스크립트 호스트를 실행 (GitSpawn)  HIGH (훅 경유 MEDIUM)
   package_install_exec     npm·pip 설치 중 다운로드·인코딩 명령         HIGH
   agent_secret_access      AI 도구가 아닌 프로그램이 AI 토큰·MCP 설정 접근 HIGH
+ [v1.2 · 2026-10-22 — 중요 파일 변조 · 브라우저 탈취 · C2 비콘]
+  critical_file_change     passwd·sudoers·ld.so.preload·authorized_keys·hosts·예약 작업 변경 HIGH (on_file, integrity)
+  browser_hijack           셸·스크립트·Temp 실행 파일이 브라우저를 원격 조종 옵션으로 띄움, 디버깅 포트 외부 개방 HIGH
+  c2_beacon                같은 프로그램이 같은 외부 IP:포트로 거의 같은 간격의 새 연결 반복 HIGH/MEDIUM
 """
 import difflib
 import ipaddress
@@ -139,6 +143,11 @@ class RuleDetector:
         self.git_child_allow = L("git_child_allow")
         self.automation_allow = L("automation_allow")
         self.web_users = set(L("web_server_users"))
+        # --- v1.2 ---
+        self.beacon_cfg = cfg.get("beacon", {"count": 6, "min_gap_sec": 30, "jitter": 0.2})
+        self.beacon_allow = set(L("beacon_allow"))
+        self.beacon = defaultdict(deque)       # (프로세스, 원격 IP, 원격 포트) → (시각, 내 포트)
+        self.hijack_flags = L("browser_hijack_flags")
         self.proc_cache = {}                   # pid → {name, parent, chain(조상 이름), exe}
         self.llm_seen = {}                     # pid → LLM API 에 접속한 시각
         self.enum_window = defaultdict(deque)  # (IP, 정규화 경로) → (시각, 원래 경로)
@@ -300,9 +309,11 @@ class RuleDetector:
         if name in self.browsers:
             flags = [f for f in self.auto_flags if f in cmd]
             if flags and parent not in self.browsers:   # 브라우저 자식 프로세스(렌더러 등) 중복 제외
+                hijack = self._browser_hijack(p, name, parent, cmd, flags, now)   # ai_pids 등록 전에 판단
                 self.ai_pids[p["pid"]] = name
                 alerts.append(("MEDIUM", "browser_automation", f"{parent} → {name}",
                                {**p, "flags": flags}))
+                alerts += hijack
 
         is_shell = name in self.shells
         is_recon = name in self.recon
@@ -347,6 +358,62 @@ class RuleDetector:
         if len(self.ai_pids) > 5000:   # 오래 켜 둬도 메모리 안 늘도록
             self.ai_pids = dict(list(self.ai_pids.items())[-2000:])
         return alerts
+
+    # ================= v1.2 — 브라우저 탈취 =================
+    def _browser_hijack(self, p, name, parent, cmd, flags, now):
+        """브라우저 원격 조종 옵션이 '외부 침입' 쪽인가 — 셸·스크립트·Temp 실행 파일이 띄웠거나,
+        디버깅 포트를 외부에 열거나(--remote-debugging-address), Temp·Public 의 확장 프로그램을 강제로 로드"""
+        exe_parent = " ".join((a.get("exe") or "").lower() for a in p.get("ancestors") or [])
+        why = []
+        if parent in self.shells or parent in self.script_hosts or parent in self.lolbins:
+            why.append(f"{parent} 가 띄움")
+        if any(d in exe_parent for d in self.staging_dirs):
+            why.append("Temp·Public 의 프로그램이 띄움")
+        for f in self.hijack_flags:
+            if f in cmd:
+                why.append(f)
+        m = re.search(r"--load-extension=([^\s\"]+)", cmd)
+        if m and any(d in m.group(1) for d in self.staging_dirs):
+            why.append("Temp·Public 의 확장 프로그램 로드")
+        if not why or self.local_ai_tree(p) or self.trusted_automation(p):
+            return []
+        if not self._once("browser_hijack", p.get("ppid"), now, 600):
+            return []
+        return [("HIGH", "browser_hijack", f"{parent} → {name}", {**p, "flags": flags, "reasons": why[:4]})]
+
+    # ================= v1.2 — 주기적 외부 접속 (C2 비콘) =================
+    def _beacon(self, n, pl, rip, now):
+        """같은 프로그램이 같은 외부 IP:포트로 '새 연결'을 거의 같은 간격으로 반복 (원격 조종 서버에 주기 보고)
+        내 포트가 매번 달라야 셈 (오래 붙어 있는 연결 1개는 제외) · 브라우저·메신저·동기화 프로그램(beacon_allow) 제외"""
+        if n.get("state") not in ("ESTABLISHED", "SYN_SENT") or n.get("ai_domain") or not rip:
+            return []
+        if pl in self.browsers or pl in self.beacon_allow or pl in self.whitelist:
+            return []
+        key = (pl, rip, n.get("raddr_port"))
+        q = self.beacon[key]
+        if q and q[-1][1] == n.get("lport"):      # 같은 연결 다시 보고된 것
+            return []
+        q.append((now, n.get("lport")))
+        while len(q) > 12:
+            q.popleft()
+        if len(self.beacon) > 20000:
+            self.beacon.clear()
+        cnt = self.beacon_cfg["count"]
+        if len(q) < cnt or len({x[1] for x in q}) < cnt:
+            return []
+        ts = [x[0] for x in list(q)[-cnt:]]
+        gaps = [(b - a).total_seconds() for a, b in zip(ts, ts[1:])]
+        med = sorted(gaps)[len(gaps) // 2]
+        if med < self.beacon_cfg["min_gap_sec"] or max(abs(g - med) for g in gaps) / med > self.beacon_cfg["jitter"]:
+            return []
+        if not self._once("c2_beacon", key, now, 3600):
+            return []
+        exe = (self.proc_cache.get(n.get("pid")) or {}).get("exe", "")
+        risky = not pl or pl in self.lolbins or pl in self.script_hosts or any(d in exe for d in self.staging_dirs)
+        q.clear()
+        return [("HIGH" if risky else "MEDIUM", "c2_beacon", f"{n.get('process') or '?'} → {rip}:{n.get('raddr_port')}",
+                 {**n, "count": cnt, "median_gap": round(med, 1), "gaps": [round(g, 1) for g in gaps],
+                  "span_sec": round((ts[-1] - ts[0]).total_seconds())})]
 
     def _process_2026(self, p, name, parent, cmd, now, shellish):
         """ARTEX 호스트 흔적 · AI 에이전트 행동 · 권한 상승 · 파일 반입"""
@@ -484,6 +551,15 @@ class RuleDetector:
         path = (f.get("path") or "").lower()
         proc = (f.get("process") or "").lower()
         exe = (f.get("exe") or "").lower()
+        # v1.2 중요 파일 변조 (CriticalFileCollector) — passwd·sudoers·ld.so.preload·authorized_keys·hosts·예약 작업
+        if f.get("source") == "integrity":
+            if self._once("critical_file_change", (path, f.get("change")), now, 60):
+                ch = f.get("change")
+                sev = "HIGH"
+                if ch == "modified" and not f.get("value") and not f.get("removed") and not f.get("mode"):
+                    sev = "MEDIUM"          # 내용 줄 변화 없음 (공백·순서) → 확인만
+                alerts.append((sev, "critical_file_change", f.get("path"), f))
+            return alerts
         # 웹쉘: 웹 폴더에 스크립트 파일
         if path.endswith(self.web_ext) and any(m in path for m in self.web_markers):
             creator_web = proc in self.web_procs or proc in self.shells or proc in self.script_hosts \
@@ -639,6 +715,11 @@ class RuleDetector:
     def on_network(self, n):
         alerts = []
         now = self.now()
+        if n.get("_ts"):                       # 시뮬레이션·테스트가 시각을 직접 줄 때 (비콘 간격 재현)
+            try:
+                now = datetime.fromisoformat(n["_ts"])
+            except ValueError:
+                pass
         proc = n.get("process", "")
         rip = n.get("raddr_ip", "")
 
@@ -691,6 +772,7 @@ class RuleDetector:
                 self.seen_inbound.add(rip)
                 alerts.append(("LOW", "new_inbound_ip", rip, n))
         if n["kind"] == "outbound" and ext:
+            alerts += self._beacon(n, pl, rip, now)
             if pl in self.lolbins and self._once("lolbin_outbound", (pl, rip), now):
                 alerts.append(("HIGH", "lolbin_outbound", f"{proc} → {rip}", n))
             if n.get("raddr_port") in self.bad_ports and self._once("odd_port_outbound", (rip, n.get("raddr_port")), now):

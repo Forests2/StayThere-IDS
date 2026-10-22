@@ -4,9 +4,9 @@ import threading
 import time
 from datetime import datetime
 
-from collectors import (HAS_WIN32, AutorunCollector, LinuxAuthCollector, LinuxAutorunCollector, LogonCollector,
-                        NetworkCollector, PowerShellCollector, ProcessCollector, SysmonCollector, WebLogCollector,
-                        WebRootCollector, ancestors)
+from collectors import (HAS_WIN32, AutorunCollector, CriticalFileCollector, LinuxAuthCollector, LinuxAutorunCollector,
+                        LogonCollector, NetworkCollector, PowerShellCollector, ProcessCollector, SysmonCollector,
+                        WebLogCollector, WebRootCollector, ancestors)
 from osutil import IS_LINUX, IS_WIN
 from osutil import is_admin
 from baseline import Baseline
@@ -53,12 +53,33 @@ class Monitor:
                         "ps4104": False, "webroot": 0, "autorun": False}
         self.recent_proc = {}     # pid → (이름, 시각): 4688 · Sysmon · psutil 이 같은 프로세스를 두 번 보고하지 않게
         self.recent_net = {}      # (방향, 원격 IP, 원격 포트, 내 포트) → 시각: Sysmon 3 · psutil 중복 제거
+        self.group_seen = {}      # v1.2 (규칙, 대상, IP) → (경보 id, 마지막 시각): 반복 경보 묶기
+        self.group_sec = int(cfg.get("alert_group_sec", 600) or 0)
         self.baseline = Baseline(cfg, db)
 
     # ---------- 실제 감시 ----------
+    def _group_key(self, rule, who, detail):
+        d = detail if isinstance(detail, dict) else {}
+        return (rule, who, d.get("raddr_ip") or d.get("src_ip") or "")
+
     def _emit(self, alerts, sim=0):
         for sev, rule, who, detail in alerts:
+            # v1.2 경보 묶기: 같은 규칙·대상·IP 가 group_sec 안에 또 오면 새 줄 대신 횟수만 +1 (시뮬레이션은 그대로)
+            if not sim and self.group_sec > 0:
+                key = self._group_key(rule, who, detail)
+                g = self.group_seen.get(key)
+                now = time.time()
+                if g and now - g[1] < self.group_sec and g[0] > self.db.meta_get("ack_id", 0):
+                    n = self.db.bump_alert(g[0])
+                    self.group_seen[key] = (g[0], now)
+                    if n in (2, 10, 100) or n % 1000 == 0:
+                        print(f"[{time.strftime('%H:%M:%S')}] {sev:6} {rule:24} {who}  (×{n} 묶음)")
+                    continue
+                if len(self.group_seen) > 5000:
+                    self.group_seen = {k: v for k, v in self.group_seen.items() if now - v[1] < self.group_sec}
             aid = self.db.add_alert(self.host, sev, rule, who, detail, sim=sim)
+            if not sim and self.group_sec > 0:
+                self.group_seen[self._group_key(rule, who, detail)] = (aid, time.time())
             if self.responder:
                 try:
                     self.responder.on_alert(aid, sev, rule, who, detail, sim)
@@ -124,6 +145,8 @@ class Monitor:
                                    self.cfg.get("web_script_ext", []))
         self.sources["webroot"] = len(webroot.dirs)
         autorun = LinuxAutorunCollector() if IS_LINUX else AutorunCollector()
+        critical = CriticalFileCollector(self.cfg.get("critical_files_linux" if IS_LINUX else "critical_files_windows", []))
+        self.sources["critical"] = len(critical.seen)
         if IS_LINUX:
             import linux_fw
             self.sources.update({"ssh": logon.source if logon else "", "iptables": linux_fw.available()})
@@ -133,14 +156,16 @@ class Monitor:
                   + (f"켜짐 ({logon.source})" if logon else "꺼짐 (root 권한 필요)")
                   + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음")
                   + " · 웹 폴더 " + (f"{len(webroot.dirs)}곳" if webroot.dirs else "없음")
-                  + " · 자동 실행(cron·systemd·authorized_keys) 감시 켜짐")
+                  + " · 자동 실행(cron·systemd) 감시 켜짐"
+                  + f" · 중요 파일 {len(critical.seen)}개 변조 감시 (passwd·sudoers·authorized_keys·ld.so.preload)")
         else:
             print("수집: 프로세스·네트워크(2초) · 로그인 " + ("켜짐" if logon else "꺼짐")
               + " · 명령줄(4688) " + ("켜짐" if self.sources["4688"] else "꺼짐 → enable_cmdline_audit.bat")
               + " · PowerShell(4104) " + ("켜짐" if self.sources["ps4104"] else "꺼짐")
               + " · Sysmon " + ("켜짐" if self.sources["sysmon"] else "없음")
               + " · 웹 로그 " + (f"{len(weblog.dirs)}곳" if weblog.dirs else "없음")
-                  + " · 자동 실행 감시 " + ("켜짐" if autorun.ok else "없음"))
+                  + " · 자동 실행 감시 " + ("켜짐" if autorun.ok else "없음")
+                  + f" · 중요 파일 {len(critical.seen)}개 변조 감시 (hosts · 예약 작업)")
         self.baseline.refresh()
         print(f"평소 패턴 학습: {self.baseline.status()}")
         proc = ProcessCollector()
@@ -179,8 +204,8 @@ class Monitor:
                 if weblog.dirs and loop % 5 == 0:
                     for w in weblog.collect():
                         self._emit(det.on_weblog(w))
-                if loop % 15 == 0:                # 약 30초마다: 자동 실행 · 웹 폴더 (Sysmon 이 없을 때 보완)
-                    for kind, ev in autorun.collect() + webroot.collect():
+                if loop % 15 == 0:                # 약 30초마다: 자동 실행 · 웹 폴더 (Sysmon 이 없을 때 보완) · 중요 파일
+                    for kind, ev in autorun.collect() + webroot.collect() + critical.collect():
                         self._side_event(det, kind, ev)
                 self.last_scan = datetime.now()
                 loop += 1
@@ -188,8 +213,11 @@ class Monitor:
                     net.refresh_dns()
                 if loop % 100 == 0:
                     det.load_feeds()
-                if loop % 1800 == 0:            # 1시간마다 평소 패턴 다시 학습
+                if loop % 1800 == 0:            # 1시간마다 평소 패턴 다시 학습 · 오래된 기록 정리
                     self.baseline.refresh()
+                    n = self.db.prune(int((self.cfg.get("retention") or {}).get("db_days", 30) or 0))
+                    if n:
+                        print(f"[기록 정리] {n}건 삭제 (retention.db_days)")
             except Exception as e:
                 print(f"[오류] {e}")
             self.stop_evt.wait(self.cfg["interval_sec"])
@@ -347,5 +375,28 @@ def scenario_linux():
     return steps
 
 
-SCENARIOS = {"linux": scenario_linux, "ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent,
+def scenario_persist():
+    """v1.2: 자리 잡기 — sudoers 에 NOPASSWD 추가 → authorized_keys 에 키 추가 → ld.so.preload 생성
+    → cmd 가 크롬을 원격 디버깅 옵션으로 띄움 → 그 뒤 wscript 가 외부 서버로 60초 간격 새 연결 반복 (비콘)"""
+    from datetime import timedelta
+    c2 = "45.9.8.21"
+    steps = [("file", {"path": "/etc/sudoers", "change": "modified", "value": "deploy ALL=(ALL) NOPASSWD: ALL",
+                       "process": "", "exe": "", "source": "integrity"}, 0.8),
+             ("file", {"path": "/home/deploy/.ssh/authorized_keys", "change": "modified",
+                       "value": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ8x...b2 attacker@kali", "process": "", "exe": "",
+                       "source": "integrity"}, 0.8),
+             ("file", {"path": "/etc/ld.so.preload", "change": "created", "value": "/tmp/.x/libhide.so",
+                       "process": "", "exe": "", "source": "integrity"}, 0.8),
+             ("process", {**_proc(7301, 7300, "chrome.exe", "cmd.exe",
+                                  r'chrome.exe --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --headless --user-data-dir=C:\Users\Public\p'),
+                          "exe": r"C:\Program Files\Google\Chrome\Application\chrome.exe"}, 1.0)]
+    # 비콘: 시뮬레이션은 실제로 1분씩 기다릴 수 없어서 시각을 직접 넣음 (탐지기는 ev["_ts"] 가 있으면 그 시각으로 봄)
+    base = datetime.now() - timedelta(seconds=60 * 7)
+    for i in range(7):
+        steps.append(("network", {**_net("outbound", c2, 8443, 49000 + i, "wscript.exe", pid=7310),
+                                  "_ts": (base + timedelta(seconds=60 * i + (i % 2) * 3)).isoformat(timespec="seconds")}, 0.25))
+    return steps
+
+
+SCENARIOS = {"linux": scenario_linux, "persist": scenario_persist, "ai": scenario_ai, "hacker": scenario_hacker, "net": scenario_net, "agent": scenario_agent,
              "web": scenario_web, "llm": scenario_llm}

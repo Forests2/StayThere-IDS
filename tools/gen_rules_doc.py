@@ -13,6 +13,7 @@ V1019 = {"artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domai
 V11 = {"webshell_file_created", "object_enumeration", "log_theft", "llm_malware_pattern", "llm_then_exec",
        "autorun_change", "ransomware_prep", "mass_file_change", "git_spawned_unusual", "package_install_exec",
        "agent_secret_access"}
+V12 = {"critical_file_change", "browser_hijack", "c2_beacon"}
 
 
 def main():
@@ -23,7 +24,8 @@ def main():
            "- **경보 화면**은 '외부 침입 흔적' 규칙(아래 ★)이 HIGH 로 걸릴 때만 뜹니다. PC 안에서 사용자가 쓰는 AI 프로그램 활동은 기록만 남깁니다.",
            "- **자동 대응**(켜져 있을 때): 🛡 = 출발지 IP 자동 차단, ⛔ = 해당 프로세스 자동 종료.",
            "- 🆕 = 2026-10-19 추가 (ARTEX 원본·한국어판 · AI 에이전트 행동 · 평소 패턴), "
-           "🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망). "
+           "🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망), "
+           "🆕¹·² = v1.2 (2026-10-22, 중요 파일 변조 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 기록 보관). "
            "근거: [CHANGELOG](../CHANGELOG.md) · [최신 위협 정보 정리](THREAT_NOTES_2026-10-19.md)",
            "- **공격 분류**는 [AIPFL-IDS](https://github.com/PrathamWankhade/AIPFL-IDS) 가 쓰는 데이터셋 라벨"
            "(NF-ToN-IoT-V2 / CICIoT2023)에 맞춰 붙였습니다. 데이터셋에 해당 개념이 없는 규칙은 `-` 로 표시합니다.", ""]
@@ -35,7 +37,7 @@ def main():
                 continue
             ko, nf, cic = RULE_TAXONOMY[r]
             mark = (" ★" if r in INTRUSION_RULES else "") + (" 🛡" if r in BLOCK_RULES else "") + \
-                   (" ⛔" if r in KILL_RULES else "") + (" 🆕" if r in V1019 else "") + (" 🆕¹·¹" if r in V11 else "")
+                   (" ⛔" if r in KILL_RULES else "") + (" 🆕" if r in V1019 else "") + (" 🆕¹·¹" if r in V11 else "") + (" 🆕¹·²" if r in V12 else "")
             out.append(f"| `{r}`{mark} | {sev} | {desc} | {f'{ko} · **{nf}**' if nf else ko} | {cic or '-'} |")
         out.append("")
     j = lambda k: ", ".join(map(str, c.get(k, [])))
@@ -81,6 +83,14 @@ def main():
         ("secret_markers · secret_readers_allow", f"{len(c['secret_markers'])} · {len(c['secret_readers_allow'])}개",
          "🆕¹·¹ `agent_secret_access` (4663 은 enable_secret_audit.ps1 로 켬)"),
         ("notify", "syslog · 웹훅 (기본 꺼짐)", "🆕¹·¹ 침입 알림을 PC 밖으로 전송 (Logpresso 등)"),
+        ("retention", f"로그 파일 {c['retention']['log_days']}일 · DB {c['retention']['db_days']}일",
+         "🆕¹·² logs/dds_날짜.log 날짜별 기록 · 오래된 로그 파일과 dds.db 기록 자동 삭제 (0 = 안 지움)"),
+        ("alert_group_sec", f"{c['alert_group_sec']}초", "🆕¹·² 같은 규칙·대상·IP 경보가 이 시간 안에 반복되면 새 줄 대신 횟수(×N)만 올림"),
+        ("critical_files_linux · critical_files_windows", f"{len(c['critical_files_linux'])} · {len(c['critical_files_windows'])}개",
+         "🆕¹·² `critical_file_change` — 30초마다 내용·권한 비교 (`~/` 는 모든 계정 홈)"),
+        ("browser_hijack_flags", f"{len(c['browser_hijack_flags'])}개", "🆕¹·² `browser_hijack` — 디버깅 포트 외부 개방 · 보안 끄기 · Temp 프로필"),
+        ("beacon · beacon_allow", f"{c['beacon']['count']}회 · 간격 {c['beacon']['min_gap_sec']}초 이상 · 편차 {c['beacon']['jitter']} · 제외 {len(c['beacon_allow'])}개",
+         "🆕¹·² `c2_beacon` — 브라우저·메신저·동기화·모니터링 에이전트는 제외"),
     ]
     out += ["## 기본 설정값 (config.json)", "", "| 항목 | 값 | 뜻 |", "|---|---|---|"]
     out += [f"| `{a}` | {b} | {d} |" for a, b, d in rows]

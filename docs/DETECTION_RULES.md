@@ -1,10 +1,10 @@
 # 탐지 규칙 목록
 
-DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성 — `python tools/gen_rules_doc.py`)
+DDS 에 들어 있는 탐지 규칙 53개입니다. (`attack_taxonomy.py` 의 `RULE_INFO`·`RULE_TAXONOMY` 에서 자동 생성 — `python tools/gen_rules_doc.py`)
 
 - **경보 화면**은 '외부 침입 흔적' 규칙(아래 ★)이 HIGH 로 걸릴 때만 뜹니다. PC 안에서 사용자가 쓰는 AI 프로그램 활동은 기록만 남깁니다.
 - **자동 대응**(켜져 있을 때): 🛡 = 출발지 IP 자동 차단, ⛔ = 해당 프로세스 자동 종료.
-- 🆕 = 2026-10-19 추가 (ARTEX 원본·한국어판 · AI 에이전트 행동 · 평소 패턴), 🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망). 근거: [CHANGELOG](../CHANGELOG.md) · [최신 위협 정보 정리](THREAT_NOTES_2026-10-19.md)
+- 🆕 = 2026-10-19 추가 (ARTEX 원본·한국어판 · AI 에이전트 행동 · 평소 패턴), 🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망), 🆕¹·² = v1.2 (2026-10-22, 중요 파일 변조 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 기록 보관). 근거: [CHANGELOG](../CHANGELOG.md) · [최신 위협 정보 정리](THREAT_NOTES_2026-10-19.md)
 - **공격 분류**는 [AIPFL-IDS](https://github.com/PrathamWankhade/AIPFL-IDS) 가 쓰는 데이터셋 라벨(NF-ToN-IoT-V2 / CICIoT2023)에 맞춰 붙였습니다. 데이터셋에 해당 개념이 없는 규칙은 `-` 로 표시합니다.
 
 ## 누가 침입했나
@@ -102,6 +102,14 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | `git_spawned_unusual` ★ ⛔ 🆕¹·¹ | HIGH/MEDIUM | git 이 cmd·powershell·스크립트 호스트를 실행 (GitSpawn: .git/config 로 실행). 훅(sh) 경유면 MEDIUM | git 설정으로 실행 · **Injection** | COMMANDINJECTION → OTHER |
 | `agent_secret_access` ★ ⛔ 🆕¹·¹ | HIGH | AI 도구가 아닌 프로그램이 Claude·Cursor·Codex 토큰·MCP 설정을 읽거나 복사 (명령줄 · 4663) | AI 도구 토큰 탈취 · **Password** | - |
 
+## 중요 파일 · 브라우저 · 비콘
+
+| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |
+|---|---|---|---|---|
+| `critical_file_change` ★ 🆕¹·² | HIGH/MEDIUM | passwd·shadow·sudoers·ld.so.preload·authorized_keys·sshd_config·pam.d (Windows: hosts·예약 작업 폴더)가 바뀜 — 30초 비교, 추가·삭제된 줄 표시. 줄 변화가 없으면 MEDIUM | 중요 파일 변조 · 지속 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+| `browser_hijack` ★ ⛔ 🆕¹·² | HIGH | cmd·powershell·wscript·Temp 의 프로그램이 브라우저를 원격 조종 옵션(--remote-debugging-port 등)으로 띄움, 디버깅 포트를 외부에 개방(--remote-debugging-address), Temp·Public 의 확장 프로그램 강제 로드. 내 AI 도구 아래는 제외 | 브라우저 탈취 · **Backdoor** | BROWSERHIJACKING → OTHER |
+| `c2_beacon` ★ 🛡 🆕¹·² | HIGH/MEDIUM | 같은 프로그램이 같은 외부 IP:포트로 새 연결을 6번 이상 거의 같은 간격(30초 이상, 편차 20% 이내)으로 반복 — 원격 조종 서버 주기 보고. 셸·스크립트·Temp 프로그램이면 HIGH, 브라우저·메신저·동기화(beacon_allow)는 제외 | 공격 서버 주기 보고 · **Backdoor** | BACKDOOR_MALWARE → OTHER |
+
 ## 기본 설정값 (config.json)
 
 | 항목 | 값 | 뜻 |
@@ -124,7 +132,7 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | `agent_burst` | 120초 · 3건 · 표시 2개 이상 | 🆕 `agent_command_style` 기준 (`agent_command_markers` 목록) |
 | `retry_burst` | 120초 · 3번 · 유사도 0.8 | 🆕 `retry_loop` 기준 |
 | `distributed_ips` | 120초 · IP 3개 | 🆕 `distributed_ips` 기준 |
-| `dev_tool_ports` | 8888(Jupyter), 11434(Ollama), 1234(LM Studio), 7860(Gradio / text-generation-webui), 8188(ComfyUI) | 🆕 `dev_tool_exposed` · `dev_tool_inbound` |
+| `dev_tool_ports` | 8888(Jupyter), 11434(Ollama), 1234(LM Studio), 7860(Gradio / text-generation-webui), 8188(ComfyUI), 9222(Chrome 원격 디버깅(CDP)), 9229(Node inspector), 9515(ChromeDriver) | 🆕 `dev_tool_exposed` · `dev_tool_inbound` |
 | `sysmon` | true | Sysmon 이 있으면 이벤트 1·3·11·12·13·22 사용 |
 | `baseline` | 7일 · 이벤트 3,000건 학습 뒤 · 10분 안에 3가지 | 🆕 `baseline_anomaly` 기준 |
 | `powershell_4104` | true | 🆕¹·¹ PowerShell 스크립트 블록 기록 읽기 (enable_cmdline_audit.bat 가 켬) |
@@ -140,5 +148,10 @@ DDS 에 들어 있는 탐지 규칙 50개입니다. (`attack_taxonomy.py` 의 `R
 | `git_suspicious_children` | cmd.exe, powershell.exe, pwsh.exe, wscript.exe, cscript.exe, mshta.exe, rundll32.exe, regsvr32.exe, certutil.exe, bitsadmin.exe, bash, sh, dash, zsh, python3, perl, curl, wget, nc | 🆕¹·¹ `git_spawned_unusual` |
 | `secret_markers · secret_readers_allow` | 21 · 29개 | 🆕¹·¹ `agent_secret_access` (4663 은 enable_secret_audit.ps1 로 켬) |
 | `notify` | syslog · 웹훅 (기본 꺼짐) | 🆕¹·¹ 침입 알림을 PC 밖으로 전송 (Logpresso 등) |
+| `retention` | 로그 파일 30일 · DB 30일 | 🆕¹·² logs/dds_날짜.log 날짜별 기록 · 오래된 로그 파일과 dds.db 기록 자동 삭제 (0 = 안 지움) |
+| `alert_group_sec` | 600초 | 🆕¹·² 같은 규칙·대상·IP 경보가 이 시간 안에 반복되면 새 줄 대신 횟수(×N)만 올림 |
+| `critical_files_linux · critical_files_windows` | 11 · 2개 | 🆕¹·² `critical_file_change` — 30초마다 내용·권한 비교 (`~/` 는 모든 계정 홈) |
+| `browser_hijack_flags` | 7개 | 🆕¹·² `browser_hijack` — 디버깅 포트 외부 개방 · 보안 끄기 · Temp 프로필 |
+| `beacon · beacon_allow` | 6회 · 간격 30초 이상 · 편차 0.2 · 제외 38개 | 🆕¹·² `c2_beacon` — 브라우저·메신저·동기화·모니터링 에이전트는 제외 |
 
 > 기준값은 개발자가 정한 초기값입니다. 실제 PC 에서 며칠 돌려 보고 오탐에 맞춰 조정하세요.

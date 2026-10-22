@@ -256,6 +256,7 @@ td.nowrap{white-space:nowrap}
         <button class="btn" data-sim="web" title="금융권 공격 유형: 고객번호 열거 · 웹쉘 · 로그 탈취">웹 침투 테스트</button>
         <button class="btn" data-sim="llm" title="PROMPTSTEAL · PROMPTFLUX 방식 + 랜섬웨어 준비">LLM 악성코드 테스트</button>
         <button class="btn" data-sim="linux" title="SSH 대입 · nginx 웹쉘 · bash 역접속 · cron 지속성">리눅스 서버 테스트</button>
+        <button class="btn" data-sim="persist" title="v1.2: sudoers · authorized_keys · ld.so.preload 변조 → 브라우저 탈취 → C2 비콘">자리 잡기 테스트</button>
       </div>
     </div>
 
@@ -769,6 +770,12 @@ const GUIDES = {
     ['누가 브라우저를 띄웠는지 확인', '부모 프로세스가 python, node 등이면 자동화 스크립트예요.', 'Get-CimInstance Win32_Process -Filter "Name=\'chrome.exe\'" | Where CommandLine -match "remote-debugging|headless" | Select ProcessId, ParentProcessId, CommandLine'],
     ['디버깅 포트 열려 있는지 확인', '9222 같은 포트가 LISTEN 이면 외부에서 브라우저를 조종할 수 있는 상태예요.', 'netstat -ano | findstr LISTENING | findstr 9222'],
     ['내가 쓰는 자동화가 아니면 종료', '종료 후 그 브라우저로 로그인했던 사이트 비밀번호를 바꾸는 걸 권해요.', 'taskkill /PID <PID> /T /F']]},
+  persist: {name: '자리 잡기 (중요 파일 · 브라우저 · 비콘)', intro: 'hosts 파일·예약 작업이 바뀌거나, 셸·스크립트가 브라우저를 원격 조종 옵션으로 띄우거나, 한 프로그램이 같은 외부 서버에 일정 간격으로 계속 접속하는 경우. 공격자가 다시 들어올 길을 만드는 단계라서 바로 치워야 해요.', steps: [
+    ['hosts 파일에서 모르는 줄 지우기', '경보의 "추가:" 줄이 내가 넣은 게 아니면 지워요. 은행·보안 사이트를 가짜 IP 로 보내는 수법이에요.', 'notepad C:\\Windows\\System32\\drivers\\etc\\hosts'],
+    ['예약 작업 확인 · 삭제', '경보에 나온 작업 이름을 확인하고 모르는 거면 지워요.', 'schtasks /Query /FO LIST /V | findstr /i "TaskName Task To Run"\nschtasks /Delete /TN "<작업 이름>" /F'],
+    ['브라우저 원격 조종 끊기', '9222 가 LISTEN 이면 그 브라우저를 종료하고, 띄운 부모 프로세스(cmd·wscript 등)도 끝내요. 그 브라우저로 로그인했던 사이트 비밀번호는 바꾸세요.', 'netstat -ano | findstr :9222\ntaskkill /PID <PID> /T /F'],
+    ['주기 접속하는 프로그램 확인', '"어디로" 칸의 IP:포트 로 접속하는 프로세스의 파일 위치를 봐요. Temp·AppData·Public 이면 악성코드일 가능성이 커요.', 'netstat -ano | findstr <IP>\nGet-Process -Id <PID> | Select Path, StartTime'],
+    ['IP 차단 · 프로세스 종료 · 증거 저장', '실시간 감시 화면의 버튼으로. 지우기 전에 증거 저장을 먼저 하세요.', null]]},
   fp: {name: '오탐일 때', intro: '내가 한 일인데 경보가 뜬 경우. 경보를 끄고 다음에 안 뜨게 설정해요.', steps: [
     ['경보 끄기', '실시간 감시 화면에서 "감시 화면으로" → 침입 기록에 남고 화면은 안전 상태로 돌아가요.', null],
     ['자주 쓰는 AI 프로그램', 'AI 도구 탐지 화면에서 "허용 목록에 추가" → 다음부터 기록만 남아요.', null],
@@ -794,6 +801,14 @@ const GUIDES_LINUX = {
     ['파일 위치 · 명령줄 확인', '/tmp, /dev/shm, 홈 폴더 숨김 파일이면 의심해요.', 'sudo ls -l /proc/<PID>/exe; sudo cat /proc/<PID>/cmdline | tr "\\0" " "'],
     ['누가 띄웠는지 확인', '부모 프로세스를 봐요.', 'ps -o pid,ppid,user,lstart,cmd -p <PID>; pstree -ps <PID>'],
     ['모르는 거면 종료 · 아는 거면 허용', '모르면 증거 저장 후 종료. 쓰는 프로그램이면 AI 도구 탐지 화면에서 "허용 목록에 추가".', 'sudo kill -9 <PID>']]},
+  persist: {name: '자리 잡기 (중요 파일 · 비콘)', intro: 'passwd·sudoers·ld.so.preload·authorized_keys·sshd_config 가 바뀌거나, 한 프로그램이 같은 외부 서버에 일정 간격으로 계속 접속하는 경우. 공격자가 다시 들어올 길을 만드는 단계라서 바로 되돌려야 해요.', steps: [
+    ['sudoers 되돌리기', '경보의 "추가:" 줄(NOPASSWD 등)을 visudo 로 지워요. 직접 편집하면 문법 오류로 sudo 가 막힐 수 있어요.', 'sudo visudo\nsudo ls -l /etc/sudoers.d/'],
+    ['authorized_keys 에서 모르는 키 지우기', '경보에 나온 계정의 파일에서 내가 넣지 않은 줄을 지워요.', 'sudo nano /home/<계정>/.ssh/authorized_keys\nsudo nano /root/.ssh/authorized_keys'],
+    ['ld.so.preload 확인 · 비우기', '이 파일은 보통 없어야 해요. 있으면 모든 프로그램에 끼어드는 라이브러리(루트킷)예요. 내용을 확인하고 지우세요.', 'cat /etc/ld.so.preload\nsudo rm /etc/ld.so.preload'],
+    ['passwd·shadow 에 새 계정 · UID 0 확인', 'UID 0 인 계정은 root 뿐이어야 해요.', "awk -F: '$3==0' /etc/passwd\nsudo usermod -L -s /usr/sbin/nologin <계정>"],
+    ['sshd_config · PAM 되돌리기', 'PermitRootLogin yes, PasswordAuthentication yes 로 바뀌었으면 되돌리고 sshd 를 재시작해요.', 'sudo grep -E "PermitRootLogin|PasswordAuthentication" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*\nsudo systemctl restart sshd'],
+    ['주기 접속하는 프로그램 확인 · 종료', '"어디로" 칸의 IP 로 접속하는 프로세스와 실행 파일 위치를 봐요. /tmp·/dev/shm·숨김 파일이면 악성코드일 가능성이 커요.', 'sudo ss -tnp | grep <IP>\nsudo ls -l /proc/<PID>/exe; sudo kill -9 <PID>'],
+    ['IP 차단 · 증거 저장', '실시간 감시 화면의 버튼으로. 지우기 전에 증거 저장을 먼저 하세요.', null]]},
   fp: {name: '오탐일 때', intro: '내가 한 일인데 경보가 뜬 경우. 다음에 안 뜨게 설정해요.', steps: [
     ['관리 자동화 (ansible 등)', 'config.json 의 automation_allow 에 자동화 도구 이름을 넣어요.', '"automation_allow": ["ansible", "<도구 이름>"]'],
     ['관리 PC 의 SSH 접속', '외부 IP 에서 관리한다면 trusted_ips 에 넣어요. 내부망 SSH 는 원래 경보 안 해요.', '"trusted_ips": ["127.0.0.1", "::1", "<관리 PC IP>"]'],

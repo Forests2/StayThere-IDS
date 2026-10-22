@@ -73,6 +73,10 @@ RULE_TAXONOMY = {
     "git_spawned_unusual":     ("git 설정으로 실행",        "Injection", "COMMANDINJECTION → OTHER"),
     "package_install_exec":    ("공급망 · 설치 스크립트",   "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
     "agent_secret_access":     ("AI 도구 토큰 탈취",        "Password",  None),
+    # v1.2 (2026-10-22)
+    "critical_file_change":    ("중요 파일 변조 · 지속",     "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
+    "browser_hijack":          ("브라우저 탈취",            "Backdoor",  "BROWSERHIJACKING → OTHER"),
+    "c2_beacon":               ("공격 서버 주기 보고",       "Backdoor",  "BACKDOOR_MALWARE → OTHER"),
 }
 
 
@@ -130,6 +134,10 @@ RULE_INFO = {
     "git_spawned_unusual":     ("AI 코딩 도구 공격", "HIGH/MEDIUM", "git 이 cmd·powershell·스크립트 호스트를 실행 (GitSpawn: .git/config 로 실행). 훅(sh) 경유면 MEDIUM"),
     "package_install_exec":    ("지속 · 랜섬웨어 · 공급망", "HIGH", "npm·pip 설치 중 실행된 명령에 다운로드·인코딩(curl·iwr·-enc·certutil -urlcache)"),
     "agent_secret_access":     ("AI 코딩 도구 공격", "HIGH", "AI 도구가 아닌 프로그램이 Claude·Cursor·Codex 토큰·MCP 설정을 읽거나 복사 (명령줄 · 4663)"),
+    # ---- v1.2 (2026-10-22) ----
+    "critical_file_change":    ("중요 파일 · 브라우저 · 비콘", "HIGH/MEDIUM", "passwd·shadow·sudoers·ld.so.preload·authorized_keys·sshd_config·pam.d (Windows: hosts·예약 작업 폴더)가 바뀜 — 30초 비교, 추가·삭제된 줄 표시. 줄 변화가 없으면 MEDIUM"),
+    "browser_hijack":          ("중요 파일 · 브라우저 · 비콘", "HIGH", "cmd·powershell·wscript·Temp 의 프로그램이 브라우저를 원격 조종 옵션(--remote-debugging-port 등)으로 띄움, 디버깅 포트를 외부에 개방(--remote-debugging-address), Temp·Public 의 확장 프로그램 강제 로드. 내 AI 도구 아래는 제외"),
+    "c2_beacon":               ("중요 파일 · 브라우저 · 비콘", "HIGH/MEDIUM", "같은 프로그램이 같은 외부 IP:포트로 새 연결을 6번 이상 거의 같은 간격(30초 이상, 편차 20% 이내)으로 반복 — 원격 조종 서버 주기 보고. 셸·스크립트·Temp 프로그램이면 HIGH, 브라우저·메신저·동기화(beacon_allow)는 제외"),
 }
 
 # ================= 규칙 묶음 (webui · responder · ip_check · llm 가 같이 씀) =================
@@ -143,7 +151,8 @@ INTRUSION_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "reco
                    "payload_staging", "distributed_ips", "dev_tool_inbound",
                    "webshell_file_created", "object_enumeration", "log_theft", "llm_malware_pattern",
                    "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change", "git_spawned_unusual",
-                   "package_install_exec", "agent_secret_access"}
+                   "package_install_exec", "agent_secret_access",
+                   "critical_file_change", "browser_hijack", "c2_beacon"}
 # AI 해킹 도구 쪽 사건으로 보는 규칙
 AI_ATTACK_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst",
                    "threat_feed_match", "lolbin_outbound", "outbound_scan", "risky_port_inbound", "odd_port_outbound",
@@ -152,13 +161,15 @@ AI_ATTACK_RULES = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "reco
                    "payload_staging", "distributed_ips", "dev_tool_inbound",
                    "webshell_file_created", "object_enumeration", "log_theft", "llm_malware_pattern",
                    "llm_then_exec", "autorun_change", "ransomware_prep", "mass_file_change", "git_spawned_unusual",
-                   "package_install_exec", "agent_secret_access"}
+                   "package_install_exec", "agent_secret_access",
+                   "critical_file_change", "browser_hijack", "c2_beacon"}
 # 자동 대응: IP 차단 / 프로세스 종료
 BLOCK_RULES = {"ioc_ip_match", "port_scan", "brute_force", "remote_rdp_logon", "threat_feed_match",
-               "lolbin_outbound", "artex_user_agent", "distributed_ips", "dev_tool_inbound", "object_enumeration"}
+               "lolbin_outbound", "artex_user_agent", "distributed_ips", "dev_tool_inbound", "object_enumeration",
+               "c2_beacon"}
 KILL_RULES = {"webserver_spawned_shell", "credential_dump", "privilege_escalation", "payload_staging",
               "artex_host_artifact", "log_theft", "llm_malware_pattern", "llm_then_exec", "ransomware_prep",
-              "mass_file_change", "git_spawned_unusual", "package_install_exec", "agent_secret_access"}
+              "mass_file_change", "git_spawned_unusual", "package_install_exec", "agent_secret_access", "browser_hijack"}
 
 
 def classify(rule):

@@ -2,7 +2,7 @@
 import json
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -52,7 +52,34 @@ class Storage:
                 cols = [r[1] for r in self.conn.execute(f"PRAGMA table_info({t})")]
                 if "sim" not in cols:
                     self.conn.execute(f"ALTER TABLE {t} ADD COLUMN sim INTEGER NOT NULL DEFAULT 0")
+            cols = [r[1] for r in self.conn.execute("PRAGMA table_info(alerts)")]
+            if "count" not in cols:          # v1.2: 같은 경보 반복 → 1건에 횟수만 올림
+                self.conn.execute("ALTER TABLE alerts ADD COLUMN count INTEGER NOT NULL DEFAULT 1")
+                self.conn.execute("ALTER TABLE alerts ADD COLUMN last_ts TEXT")
             self.conn.commit()
+
+    # ---------- v1.2: 오래된 기록 정리 ----------
+    def prune(self, days, vacuum=False):
+        """days 일 지난 이벤트·경보·사건 삭제 → 지운 건수. vacuum=True 면 파일 크기도 줄임 (시작할 때 한 번)"""
+        if not days or days <= 0:
+            return 0
+        cut = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+        n = 0
+        with self.lock:
+            for t in ("events", "alerts", "incidents"):
+                n += self.conn.execute(f"DELETE FROM {t} WHERE ts<?", (cut,)).rowcount
+            self.conn.commit()
+            if vacuum and n:
+                try:
+                    self.conn.execute("VACUUM")
+                except sqlite3.Error:
+                    pass
+        return n
+
+    def db_size(self):
+        with self.lock:
+            r = self.conn.execute("PRAGMA page_count").fetchone()[0] * self.conn.execute("PRAGMA page_size").fetchone()[0]
+        return r
 
     # ---------- 쓰기 ----------
     def add_event(self, host, kind, data, sim=0):
@@ -70,6 +97,14 @@ class Storage:
                  json.dumps(detail, ensure_ascii=False, default=str), sim))
             self.conn.commit()
             return cur.lastrowid
+
+    def bump_alert(self, alert_id):
+        """같은 경보가 또 왔을 때: 새 줄 대신 횟수 +1, 마지막 시각 갱신 → 현재 횟수"""
+        with self.lock:
+            self.conn.execute("UPDATE alerts SET count=count+1, last_ts=? WHERE id=?", (_now(), alert_id))
+            self.conn.commit()
+            r = self.conn.execute("SELECT count FROM alerts WHERE id=?", (alert_id,)).fetchone()
+        return r["count"] if r else 0
 
     def meta_set(self, k, v):
         with self.lock:

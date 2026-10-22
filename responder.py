@@ -44,7 +44,8 @@ RULE_KO = {"port_scan": "포트 스캔", "ioc_ip_match": "ARTEX 공격 IP", "web
            "llm_then_exec": "LLM 지시로 명령 실행", "autorun_change": "자동 실행 등록",
            "ransomware_prep": "랜섬웨어 준비 (백업 삭제)", "mass_file_change": "대량 파일 암호화 의심",
            "git_spawned_unusual": "git 설정으로 실행", "package_install_exec": "설치 스크립트 다운로드",
-           "agent_secret_access": "AI 도구 토큰 탈취"}
+           "agent_secret_access": "AI 도구 토큰 탈취",
+           "critical_file_change": "중요 파일 변조", "browser_hijack": "브라우저 탈취", "c2_beacon": "공격 서버 주기 보고(비콘)"}
 
 
 # ================= 알림 외부 전송 (Logpresso · syslog 서버 · 사내 웹훅) =================

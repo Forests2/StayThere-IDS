@@ -273,6 +273,33 @@ def scenario_linux_normal():
     return run("시나리오 K: 리눅스 정상 운영", steps, det, clock)
 
 
+def scenario_persist():
+    """v1.2 L: 중요 파일 변조 → 브라우저 탈취 → C2 비콘 (시각은 Clock 으로 1분씩)"""
+    clock = Clock(datetime(2026, 10, 22, 3, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    import monitor
+    steps = []
+    for k, ev, _ in monitor.scenario_persist():
+        ev = {k2: v for k2, v in ev.items() if k2 != "_ts"}
+        label = (ev.get("path") or ev.get("cmdline") or f"{ev.get('process')} → {ev.get('raddr_ip')}:{ev.get('lport')}")[:38]
+        steps.append((label, k, ev, 60 if k == "network" else 2))
+    return run("시나리오 L: 자리 잡기 (v1.2)", steps, det, clock)
+
+
+def scenario_persist_normal():
+    """v1.2 M: 정상 — 패키지 업데이트가 passwd 를 안 건드림 · 오래 붙어 있는 연결 · 브라우저·Teams 주기 접속 · 로컬 AI 의 Playwright"""
+    clock = Clock(datetime(2026, 10, 22, 10, 0, 0))
+    det = RuleDetector(CFG, now_fn=clock)
+    steps = [("Playwright 가 크롬 띄움 (node 아래)", "process",
+              {**proc(8101, 8100, "chrome.exe", "node.exe", "chrome.exe --remote-debugging-pipe --headless"),
+               "ancestors": [{"name": "node.exe", "cmdline": "node node_modules/playwright/cli.js test"}]}, 1)]
+    for i in range(8):     # 같은 연결(내 포트 동일)이 2초마다 보고됨 → 비콘 아님
+        steps.append((f"DB 연결 유지 {i}", "network", net("outbound", "45.9.8.30", 5432, 50123, "java"), 60))
+    for i in range(8):     # Teams 가 60초마다 새 연결 → 허용 목록
+        steps.append((f"Teams 주기 접속 {i}", "network", net("outbound", "52.113.194.132", 443, 51000 + i, "ms-teams.exe"), 60))
+    return run("시나리오 M: v1.2 정상 운영", steps, det, clock)
+
+
 def test_parsers():
     print("\n=== 수집기 파서 ===")
     ok = True
@@ -386,6 +413,8 @@ if __name__ == "__main__":
     i_ = scenario_normal_dev()
     j_ = scenario_linux_attack()
     k_ = scenario_linux_normal()
+    l_ = scenario_persist()
+    m_ = scenario_persist_normal()
     judged = judge_check(c)
     expect = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst"}
     expect_c = {"artex_user_agent", "distributed_ips", "agent_command_style", "retry_loop", "payload_staging",
@@ -405,7 +434,8 @@ if __name__ == "__main__":
                            ("H", h_, {"git_spawned_unusual", "package_install_exec", "agent_secret_access"}),
                            ("J", j_, {"brute_force", "remote_rdp_logon", "webserver_spawned_shell", "recon_burst",
                                       "lolbin_outbound", "odd_port_outbound", "payload_staging", "credential_dump",
-                                      "user_created", "added_to_admin_group", "autorun_change", "webshell_file_created"})):
+                                      "user_created", "added_to_admin_group", "autorun_change", "webshell_file_created"}),
+                           ("L", l_, {"critical_file_change", "browser_hijack", "c2_beacon"})):
         for r in sorted(want):
             print(f"  {'OK ' if r in got else 'MISS'} {tag} {r}")
             miss += r not in got
@@ -417,6 +447,10 @@ if __name__ == "__main__":
     print(f"  리눅스 정상 운영(K) → 빨간 경보 {len(k_intr)}건 ({'OK' if not k_intr else '오탐: ' + ', '.join(k_intr)})"
           f" · 기록만: {', '.join(sorted(set(k_))) or '없음'}")
     miss += len(k_intr)
+    m_intr = [r for r in m_ if r in INTRUSION_RULES]
+    print(f"  v1.2 정상 운영(M) → 빨간 경보 {len(m_intr)}건 ({'OK' if not m_intr else '오탐: ' + ', '.join(m_intr)})"
+          f" · 기록만: {', '.join(sorted(set(m_))) or '없음'}")
+    miss += len(m_intr)
     e_intr = [r for r in e if r in INTRUSION_RULES]
     print(f"  정상 사용 알림 수: {len(b)} ({'OK' if not b else '오탐 있음: ' + ', '.join(b)})")
     print(f"  내 AI 도구 사용 → 빨간 경보 {len(e_intr)}건 ({'OK' if not e_intr else '오탐: ' + ', '.join(e_intr)})"

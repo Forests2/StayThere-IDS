@@ -1,5 +1,25 @@
 # 변경 기록
 
+## 2026-10-22 — v1.2 (탐지 규칙 50 → 53개) · 경보 묶기 · 기록 보관
+
+### 추가한 탐지 규칙 (3개)
+| 규칙 | 내용 | 근거 (MITRE ATT&CK) | 자동 대응 |
+|---|---|---|---|
+| `critical_file_change` | `/etc/passwd`·`shadow`·`group`·`sudoers`(.d)·`hosts`·`ld.so.preload`·`sshd_config`(.d)·`pam.d`·모든 계정의 `authorized_keys`, Windows `hosts`·`System32\Tasks`(예약 작업) 를 30초마다 내용·권한·소유자 비교 → 추가·삭제된 줄 표시. 줄 변화 없이 공백만 바뀌면 MEDIUM | T1574.006 ld.so.preload 하이재킹 · T1098.004 SSH authorized_keys · T1548.003 sudo · T1556.003 PAM · T1053.005 예약 작업 | - |
+| `browser_hijack` | 브라우저가 원격 조종 옵션으로 실행됐을 때 그중 '외부 침입' 쪽만: cmd·powershell·wscript·Temp 의 프로그램이 띄움, `--remote-debugging-address=0.0.0.0`, `--disable-web-security`, Temp·Public 프로필, Temp 의 확장 프로그램 `--load-extension`. 내 AI 도구(Playwright·Claude Code 등) 아래는 제외 (기존 `browser_automation` 은 그대로 기록용) | T1185 브라우저 세션 탈취 · T1176 브라우저 확장 | 프로세스 종료 |
+| `c2_beacon` | 같은 프로그램이 같은 외부 IP:포트로 **새 연결**(내 포트가 매번 다름)을 6회 이상, 간격 30초 이상, 편차 20% 이내로 반복. 셸·스크립트·Temp 프로그램이면 HIGH, 그 외 MEDIUM. 브라우저·`beacon_allow`(Teams·OneDrive·svchost·zabbix 등 38개)·허용 목록 제외 | T1071 C2 통신(주기 보고) | IP 차단 |
+
+### 운영
+- **경보 묶기** (`alert_group_sec`, 기본 600초): 같은 규칙·대상·IP 경보가 반복되면 `alerts.count` 만 +1 (`last_ts` 갱신), 화면에는 `(×N · 마지막 시각)`. 「감시 화면으로」(ack) 뒤의 새 경보는 새 줄. 시뮬레이션은 묶지 않음. 외부 알림(syslog·웹훅)·자동 대응은 첫 건에만
+- **기록 보관** (`retention`): `logs/dds_YYYY-MM-DD.log` 에 화면 출력을 날짜별로 기록(`logfile.py`), `log_days` 지난 파일 삭제. `dds.db` 의 이벤트·경보·사건은 `db_days` 지나면 삭제 — 시작할 때(VACUUM 포함) · 1시간마다. `python dds_agent.py --alerts` 에 ×N 표시
+- `dev_tool_ports` 에 9222(Chrome 원격 디버깅) · 9229(Node inspector) · 9515(ChromeDriver) 추가 → 외부 IP 가 들어오면 `dev_tool_inbound`, 외부에 열리면 `dev_tool_exposed`
+- `LinuxAutorunCollector` 에서 `ld.so.preload`·`/root/.ssh/authorized_keys` 를 빼고 `CriticalFileCollector` 로 옮김 (중복 경보 방지)
+
+### 대시보드 · 테스트
+- 센서 「중요 파일 · 비콘」(10번째), 「자리 잡기 테스트」 버튼, 사건 「어디로」에 C2 비콘 표시, 「무엇이」에 중요 파일 변조·브라우저 탈취
+- `test_artex_sim.py` 시나리오 L(자리 잡기: 3개 규칙 탐지) · M(v1.2 정상 운영: 오래 붙어 있는 DB 연결 · Teams 60초 주기 접속 · node 아래 Playwright → 빨간 경보 0건)
+- 이 개발 환경(Linux)에서 `/etc/hosts` 줄 추가·삭제, `/etc/ld.so.preload` 생성·삭제를 실제로 탐지 확인, 경보 묶기(5회 → 1줄 ×5)·ack 뒤 새 줄·DB 정리·로그 파일 생성 확인
+
 ## 2026-10-21 — Linux 서버 지원
 
 - **실행:** `run_dds.sh`(root 로 다시 실행 · psutil 없으면 설치, 폐쇄망은 `PIP_INDEX`), `check_ip.sh`, `emergency_release.sh`
