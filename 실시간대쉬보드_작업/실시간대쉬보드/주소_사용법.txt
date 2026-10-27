@@ -1,0 +1,38 @@
+더블클릭 그래프 팝업 주소 (2026-10-16 수정본)
+
+  http://<서버IP>:8989/?sys=M16HUB&at=2026-10-16_23:59&view=popup
+
+  sys   M14 / M14B / M16A / M16B / M16HUB
+  at    YYYY-MM-DD_HH:MM  (24시간, 분까지)
+  view  popup  → 관제 화면 없이 팝업만 (다른 사이트용)
+        빼면   → 관제 화면 + 그 팝업
+
+  <서버IP> : 대시보드 서버 PC 의 IP 또는 이름 (서버 PC 에서 ipconfig → IPv4 주소)
+             localhost 는 다른 PC 에서 안 열린다.
+  포트 8989 : config.json 의 server.port
+
+적용
+  1) graphs.py · server.py · static/dashboard.html 3개를 같이 덮어쓴다
+  2) 서버 재시작
+  (patch 로 적용: 실시간대쉬보드 폴더에서  patch -p1 < score_cause_grid.patch)
+
+2026-10-19 추가 수정 (오프닝 화면)
+  - 머리 두 줄 삭제 (FAB OPERATIONS INTELLIGENCE · LLM ANOMALY WATCH), 표제를 그 자리로
+  - 표제: 실시간 FAB 위험도 / 관제 플랫폼
+  - 설명: FAB의 상태를 점수로 나타내고 이상감지 및 원인을 확인할 수 있습니다.
+  - 지표(SYSTEMS·LATENCY·OPEN ALERTS) + 테마/숨김 → 창 오른쪽 최상단
+  - FAB 칸: '운영 중' 대신 지금 스코어 + 지금 알람(경계중/위험중/초위험중 n · 없음 · 미적용)
+    (server.py 에 /api/open/now 추가 — FAB 다섯을 한 번에, 날짜 파일 끝부분만 읽는다.
+     보는 중 표시를 안 남겨 분당 LLM 이 안 돈다. /api/feed 는 원래 그대로)
+  - 안내: 담당 FAB을 선택하시면 실시간 이상감지 내역 및 분석 내용을 확인할 수 있습니다.
+  - 관제 화면 상단 로고: AMHS SENTINEL / LLM 실시간 이상감지 · 관제 → AMHS FAB Scoring system (글자 16px → 13px)
+  - 시스템 고르기(바꾸기) 칩: 크게 + ▾ 표시, 열리는 목록 글자도 크게
+  - 관제 화면 안내: FAB Scoring System 은 FAB의 상태를 점수로 확인할 수 있습니다. 각 시간대별로 점수를 클릭하면 해당 점수가 부여된 원인을 확인할 수 있습니다.
+  - 관제 화면 LLM 칸: 첫 줄(LLM 최근 판단·등급·시각·확신도) 숨김, 판단 문장 크게(19px), '근거 없음' 안 냄,
+    단추 문구 [과거 분석내용 보기]
+  - LLM 문장 표기(화면만): '발동 사유' → '원인', '아닙니다' → '아닌 것으로 추정됩니다'
+    (LLM 칸 · 그래프 팝업 분석 내용 · 과거 분석내용 표)
+  - 추이 '겹쳐 보기'(FAB 선) 삭제
+  - 더블클릭 팝업 원인 칸: 'LLM 판단' → '분석 내용', '실제지표' → '점수 영향 지표'
+  - 더블클릭 팝업: '그 1분 OHT 재생' → 'FAB Play Back'
+  - 오프닝 FAB 칸을 (10vh + 10px) 내림 — 오른쪽 발광 구의 빛을 안 가리게 (폭 1181px 이상)

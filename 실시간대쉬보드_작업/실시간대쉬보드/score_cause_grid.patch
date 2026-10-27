@@ -1,0 +1,871 @@
+--- a/graphs.py
++++ b/graphs.py
+@@ -1450,7 +1450,7 @@
+ 
+ 
+ def render(rows, center, minutes=60, width=1000, cfg=None, fabs=None,
+-           theme="dark") -> str:
++           theme="dark", split=False) -> str:
+     """구간 그래프 — 스코어 패널 + 지표 격자 (칸마다 더블클릭한 분 표시).
+ 
+     fabs 를 주면 그 FAB 의 영역점수를 스코어 패널에 겹쳐 그린다. 화면의 추이
+@@ -1696,6 +1696,7 @@
+         o.append(f'<text x="{lx + 2:.1f}" y="{ly:.1f}" font-size="9" '
+                  f'fill="{P["tx3"]}" font-family="Consolas,monospace">area_score</text>')
+ 
++    i_grid = len(o)   # split — 여기부터가 지표 격자 (아래 그림)
+     # ── 지표 격자 — 실제지표 / 신규 지표 ─────────────────────────────
+     # ★고객(2026-10-06): "실제지표로 따로 신규지표로 따로". 같은 열 수 · 같은 칸
+     #   모양으로 두 묶음을 위아래로 깐다. 묶음마다 '임계 넘은 것부터'.
+@@ -1734,6 +1735,18 @@
+                  f'fill="{P["tx3"]}">{_e(head + " · ".join(shown))}'
+                  f'{_e(f" 외 {more}개") if more else ""}{tip}</text>')
+     o.append("</svg>")
++    if split:
++        # ★고객(2026-10-16): "스코어는 위 · 원인 · 실제지표 그래프들은 아래".
++        #   한 장을 두 장으로 끊는다 — 위(제목·스코어) / 아래(지표 격자).
++        #   사이의 <!--GPIN--> 자리에 화면이 원인 칸(#gpin)을 끼운다.
++        #   아래 그림은 viewBox 를 ys 부터 잡아 좌표를 그대로 쓴다.
++        ys = y_axis + 8
++        top = _svg_open(width, ys, P)
++        bot = _svg_open(width, height - ys, P)
++        bot[0] = bot[0].replace('viewBox="0 0 ', f'viewBox="0 {ys:.0f} ', 1)
++        bot[2] = (f'<rect y="{ys:.0f}" width="100%" height="{height - ys:.0f}" '
++                  f'fill="{P["bg"]}"/>')
++        return "".join(top + o[3:i_grid] + ["</svg>", "<!--GPIN-->"] + bot + o[i_grid:])
+     return "".join(o)
+ 
+ 
+--- a/server.py
++++ b/server.py
+@@ -2136,6 +2136,113 @@
+ _LVKEY = {"경계중": "warn", "위험중": "danger", "초위험중": "critical"}
+ 
+ 
++# ── 오프닝 FAB 칸 — 지금 스코어 · 지금 알람 (2026-10-19) ─────────────────────
++# ★처음엔 칸마다 /api/feed?sys=FAB 를 불렀다. 그러면 (1) 하루치 전체(케이스 매칭·지표·
++#   OHT_MAP·FAB 점수)를 다섯 번 만들고 (2) rctx() 가 다섯 FAB 을 '보는 중' 으로 찍어
++#   분당 LLM 까지 다섯 개가 돌았다 — 오프닝이 느려졌다(고객).
++# ★여기서는: 컨텍스트를 안 만들고(sys_cfg 만) 보는 중 표시도 안 남긴다. 날짜 파일의
++#   **끝부분만** 읽어 마지막 1분 스코어·등급과 등급 카운터 창(N분)만 센다.
++#   점수·등급·카운터는 /api/feed 와 같은 함수(_score · grade · alarm_count.scan)다.
++OPEN_NOW_TAIL = 400            # 끝에서 몇 행을 보나 — 카운터 창(최대 180분)보다 넉넉히
++_OPEN_NOW: dict = {}           # {FAB: (파일 지문, 결과)} — 파일이 그대로면 다시 안 센다
++
++
++def _tail_rows(path: str, n: int) -> list[dict]:
++    """CSV 의 머리글 + 마지막 n 행만 읽는다 (하루치 전체를 안 읽는다).
++
++    ★칸 안에 줄바꿈이 든 행(따옴표로 싼 reason 등)이 있으면 자른 자리가 그 칸 한가운데일
++      수 있다 — 따옴표 짝이 어긋나면 뒤가 통째로 한 칸이 된다. 그래서 자른 뒤 줄 머리를
++      하나씩 밀어 보며 **모든 행의 칸 수가 머리글과 같은** 자리에서 읽는다.
++    """
++    import csv
++    import io
++    with open(path, "rb") as f:
++        head = f.readline()
++        f.seek(0, 2)
++        end = f.tell()
++        size = 64 * 1024
++        while True:
++            start = max(len(head), end - size)
++            f.seek(start)
++            body = f.read(end - start)
++            if start == len(head) or body.count(b"\n") > n + 50:
++                break
++            size *= 2
++    hdr = next(csv.reader([head.decode("utf-8-sig", errors="replace")]), [])
++    text = body.decode("utf-8", errors="replace")
++    if start == len(head):
++        cands = [0]                                  # 파일 전체 — 자른 데가 없다
++    else:
++        cands, p = [], -1                            # 잘린 첫 줄 뒤부터 줄 머리마다
++        for _ in range(60):
++            p = text.find("\n", p + 1)
++            if p < 0:
++                break
++            cands.append(p + 1)
++    for c0 in cands:
++        try:
++            recs = [r for r in csv.reader(io.StringIO(text[c0:])) if r]
++        except csv.Error:
++            continue
++        if recs and all(len(r) == len(hdr) for r in recs):
++            return [dict(zip(hdr, r)) for r in recs[-n:]]
++    return []
++
++
++def _open_now_one(code: str) -> dict:
++    from sentinel import _row_dt, _score, grade
++    from store_csv import day_path, latest_day
++    c = sys_cfg(CFG, code)
++    day = datetime.now().strftime("%Y%m%d")
++    path = day_path(day, c)
++    if not os.path.isfile(path) or os.path.getsize(path) == 0:
++        old = latest_day(c)                  # 오늘이 비었으면 최근 날 (feed 와 같다)
++        if not old:
++            return {"ok": False}
++        day, path = old, day_path(old, c)
++    st = os.stat(path)
++    sig = (path, st.st_mtime_ns, st.st_size,
++           json.dumps(CFG.get("grade") or {}, sort_keys=True, ensure_ascii=False))
++    hit = _OPEN_NOW.get(code)
++    if hit and hit[0] == sig:
++        return hit[1]
++    seq = []
++    for r in _tail_rows(path, OPEN_NOW_TAIL):
++        dt = _row_dt(r)
++        if dt is not None:
++            seq.append((dt, _score(r)))
++    seq.sort(key=lambda x: x[0])
++    if not seq:
++        out = {"ok": False}
++    else:
++        lv = [(t, grade(sc, c)["level"]) for t, sc in seq]
++        a = alarm_count.scan(lv, c)[-1]          # 마지막 분 = 지금
++        t, sc = seq[-1]
++        g = grade(sc, c)
++        out = {"ok": True, "day": day, "at": t.isoformat(),
++               "datetime": t.strftime("%Y-%m-%d %H:%M"),
++               "score": sc, "level": g["level"],
++               "alarm": {"w": a["warn"], "d": a["danger"], "c": a["critical"],
++                         "lv": a["label"], "min": a["window_min"], "on": a["enabled"],
++                         "why": alarm_count.why(a, alarm_count.policy(c))}}
++    _OPEN_NOW[code] = (sig, out)
++    return out
++
++
++@app.route("/api/open/now")
++def api_open_now():
++    """오프닝 FAB 칸 — FAB 마다 지금(마지막 1분) 스코어·등급 + 지금 등급 카운터(알람)."""
++    fabs = {}
++    for code in systems():
++        if code == "ALL":
++            continue
++        try:
++            fabs[code] = _open_now_one(code)
++        except Exception as e:                              # noqa: BLE001
++            fabs[code] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
++    return jsonify({"ok": True, "fabs": fabs})
++
++
+ @app.route("/api/feed")
+ def api_feed():
+     """수집한 전체 데이터 — 정상 포함 4등급으로 분류해서 내려준다.
+@@ -2512,11 +2619,11 @@
+     #   열면 그대로 다시 그렸다. 원본 날짜 파일이 그대로면 결과도 그대로다.
+     # ★날짜 파일이 하나라도 없으면 _days_sig 가 None 을 돌려주고, 그러면
+     #   캐시를 안 쓴다 — 없는 파일을 '그대로' 라고 하면 안 된다.
+-    key = f'{C["sys"]}|{at.isoformat()}|{minutes}|{",".join(picked)}|{theme}'
++    key = f'{C["sys"]}|{at.isoformat()}|{minutes}|{",".join(picked)}|{theme}|split'
+     return _cached_json(
+         GRAPH_CACHE, key, _days_sig(days, C["cfg"]),
+         lambda: render(rows, at, minutes, cfg=C["cfg"], fabs=picked,
+-                       theme=theme).encode("utf-8"),
++                       theme=theme, split=True).encode("utf-8"),
+         ctype="image/svg+xml; charset=utf-8")
+ 
+ 
+--- a/static/dashboard.html
++++ b/static/dashboard.html
+@@ -116,7 +116,13 @@
+   /* 입자 색은 JS 가 토큰(--cy·--ok·--line2)에서 읽는다(opBgStart) — 여기선 밝기만 */
+   .open canvas{position:absolute;inset:0;width:100%;height:100%;display:block;
+                pointer-events:none;opacity:var(--opcv)}
+-  .open .box{position:relative;width:100%;max-width:1180px}
++  .open .box{position:relative;width:100%;max-width:1180px;
++             /* ★2026-10-19 머리 두 줄(FAB OPERATIONS INTELLIGENCE · LLM ANOMALY WATCH)을
++               지우고 표제를 그 자리로 올렸다. 지운 높이(머리 19px + 눈썹 줄 + 표제 위 여백)만큼
++               아래에 채워 상자 높이를 그대로 둔다 — 세로 가운데 맞춤이라 안 채우면 전체가 내려앉는다. */
++             padding-bottom:calc(39px + clamp(8px,4vh,72px) + clamp(6px,2vh,22px)
++                                 + clamp(12px,2.6vh,34px) + 34px
++                                 + clamp(12.5px,1.55vh,14px) * 1.55 + 5px)}   /* 안내 문구 두 줄 → 한 줄 */
+   .dsp{font-family:Caprasimo,Georgia,"Times New Roman",serif;font-weight:400}
+ 
+   /* ══ 오프닝 머리 — 받은 시안(LLM ANOMALY WATCH) 그대로 ══
+@@ -124,13 +130,10 @@
+      ★시안은 검은 배경 한 벌이지만 이 화면은 테마가 넷이다(다크·화이트·
+        네이비·고대비). 색을 박지 않고 전부 토큰(--bg·--tx·--cy…)에서 꺼내
+        쓴다 — 화이트에서도 글자가 읽히고 구(球)만 옅어진다. */
+-  .ohead{display:flex;align-items:center;justify-content:space-between;gap:24px;
++  .ohead{position:absolute;top:0;right:0;z-index:1;   /* V1.0 — 표제 줄 오른쪽 끝, 자리를 안 먹는다 */
++         display:flex;align-items:center;justify-content:flex-end;gap:24px;
+          font-size:12px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+          color:var(--tx3)}
+-  .ohead .lf{display:flex;align-items:center;gap:12px}
+-  .ohead .mk{display:block;width:8px;height:8px;border-radius:999px;background:var(--ok);
+-             flex:0 0 auto;animation:opPulse 2.4s ease-in-out infinite}
+-  .ohead .mk i{display:none}
+   @keyframes opPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.3}}
+ 
+   /* 발광 구 — 오른쪽 위. 시안의 주황 코어 + 청록/살구 고리 둘.
+@@ -153,14 +156,9 @@
+   @media(max-height:900px){ .oorb{transform:scale(.8);transform-origin:100% 0} }
+   @media(max-height:740px){ .oorb{transform:scale(.62);transform-origin:100% 0} }
+ 
+-  /* 눈썹 — 'LLM ANOMALY WATCH' + 가로줄 */
+-  .oeye{display:flex;align-items:center;gap:20px;padding-top:clamp(8px,4vh,72px);
+-        font-size:13px;font-weight:700;letter-spacing:.3em;text-transform:uppercase;color:var(--cy)}
+-  .oeye::after{content:'';flex:1;max-width:330px;height:1px;background:var(--line2)}
+-
+   /* 한글 표제는 Caprasimo 에 글리프가 없다. 시스템 한글 글꼴을 굵게 써서
+      옆의 라틴 표제와 무게를 맞춘다 — 안 그러면 혼자 가늘어 보인다. */
+-  .oask{max-width:860px;padding-top:clamp(6px,2vh,22px)}
++  .oask{max-width:860px;padding-top:0}
+   .oask h2{margin:0;font-size:clamp(30px,5.2vh,64px);line-height:1.06;letter-spacing:-.02em;font-weight:800;
+            font-family:"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",Figtree,sans-serif}
+   .oask h2 em{font-style:normal;color:var(--cy)}
+@@ -168,16 +166,20 @@
+           font-size:clamp(13px,1.6vh,16px);line-height:1.6;color:var(--tx2)}
+ 
+   /* 지표 띠 — STREAMS · LATENCY · OPEN ALERTS + MONITORING LIVE */
+-  .ostat{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;
++  .ostat{display:flex;align-items:flex-end;justify-content:flex-end;gap:24px;flex-wrap:wrap;
+          margin-top:clamp(12px,3vh,40px);padding-top:clamp(10px,2.2vh,26px);
+          border-top:1px solid var(--line)}
+-  .ostat .kk{display:flex;gap:48px;flex-wrap:wrap}
+-  .ostat .k{display:block}
+-  .ostat .k .lb{display:block;font-size:11px;font-weight:700;letter-spacing:.2em;
++  /* ★2026-10-19 지표와 테마·숨김 줄은 **창 오른쪽 최상단 모서리**(.otr)로 옮겼다.
++     화면이 좁거나 낮으면 아래 @media 에서 제자리(표제 위 흐름)로 — 표제와 안 겹치게. */
++  .otr{position:fixed;z-index:2;top:16px;right:24px;
++       display:flex;flex-direction:column;align-items:flex-end;gap:12px}
++  .otr .kk{display:flex;gap:48px;flex-wrap:wrap;justify-content:flex-end}
++  .otr .k{display:block}
++  .otr .k .lb{display:block;font-size:11px;font-weight:700;letter-spacing:.2em;
+                 text-transform:uppercase;color:var(--tx3)}
+-  .ostat .k .vl{display:block;margin-top:6px;font-size:clamp(19px,2.6vh,27px);font-weight:700;line-height:1;color:var(--tx)}
+-  .ostat .k.cy .vl{color:var(--cy)}
+-  .ostat .k.wn .vl{color:var(--wn)}
++  .otr .k .vl{display:block;margin-top:6px;font-size:clamp(19px,2.6vh,27px);font-weight:700;line-height:1;color:var(--tx)}
++  .otr .k.cy .vl{color:var(--cy)}
++  .otr .k.wn .vl{color:var(--wn)}
+   .ostat .lv{display:inline-flex;align-items:center;gap:12px;border-radius:999px;
+              padding:clamp(8px,1.3vh,12px) 26px;
+              border:1px solid var(--line2);background:var(--panel);font-size:12px;font-weight:700;
+@@ -188,6 +190,7 @@
+   /* 테마 고르기 — 오프닝에서도 (상단 바와 같은 data-theme 단추) */
+   .othm{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:clamp(12px,2.6vh,34px);
+         font-size:12px;color:var(--tx3)}
++  .otr .othm{padding-top:0;justify-content:flex-end}
+   .othm .cap{font-weight:700;letter-spacing:.18em;text-transform:uppercase}
+   .othm button{border:1px solid var(--line2);background:var(--panel);color:var(--tx2);
+                border-radius:999px;padding:7px 16px;font:inherit;font-size:12.5px;cursor:pointer}
+@@ -202,6 +205,15 @@
+      ★2026-09 숨김 모드(기본 켜짐)면 ALL 을 가려서 lead 줄을 안 그린다 —
+        rest 한 줄만 나온다. 비밀번호로 숨김을 끄면 lead 가 다시 선다. */
+   .sysgrid{display:grid;gap:clamp(10px,1.8vh,20px);padding-top:clamp(14px,3.4vh,48px)}
++  /* ★2026-10-19 고객: FAB 칸이 오른쪽 발광 구의 빛을 가린다 — 칸을 (10vh + 10px) 내린다.
++     상자 아래 여백(.open .box)에서 같은 만큼 빼서 표제 자리는 그대로다(세로 가운데 맞춤).
++     구는 폭 1180px 이하에서 숨으므로(.oorb) 그때는 안 내린다. */
++  @media(min-width:1181px){
++    .sysgrid{padding-top:calc(clamp(14px,3.4vh,48px) + 10vh + 10px)}
++    .open .box{padding-bottom:calc(39px + clamp(8px,4vh,72px) + clamp(6px,2vh,22px)
++                                   + clamp(12px,2.6vh,34px) + 34px
++                                   + clamp(12.5px,1.55vh,14px) * 1.55 + 5px - 10vh - 10px)}
++  }
+   .sysgrid .lead{display:grid;grid-template-columns:1.3fr 1fr;gap:20px}
+   /* ALL 은 이제 혼자 한 줄을 쓴다 (아바타 카드를 뺐다). 그대로 두면 236px 짜리
+      큰 카드가 화면 폭 전부를 먹어 FAB 다섯이 접힌 아래로 밀린다 — 가로로
+@@ -248,6 +260,15 @@
+   /* ★상태 줄은 아바타 카드(.sys.app)와 같이 쓰는 규칙이라 여기서만 줄인다.
+      .sys .st 를 건드리면 위 줄의 큰 카드까지 같이 작아진다. */
+   .sys.fab .st{margin-top:9px;font-size:11px;gap:6px}
++  /* ★2026-10-19 FAB 칸 — '운영 중' 대신 지금 스코어(오른쪽 위) · 오늘 경계/위험/초위험 / 알람 */
++  .sys.fab{position:relative;min-width:0}   /* min-width:0 — 글자가 길어도 다섯 칸 폭이 같게 */
++  .sys.fab .scv{position:absolute;top:clamp(10px,1.5vh,15px);right:17px;text-align:right;line-height:1}
++  .sys.fab .scv b{display:block;font:800 22px/1 Consolas,monospace;color:var(--tx)}
++  .sys.fab .scv span{display:block;margin-top:4px;font-size:10.5px;font-weight:700;color:var(--tx3)}
++  .sys.fab .fs{margin-top:9px;font-size:11px;color:var(--tx3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
++  .sys.fab .fs .chip.alm{font-size:10.5px;padding:1px 6px}
++  .sys.fab .fs b{font-family:Consolas,monospace;font-size:12px;color:var(--tx)}
++  .sys.fab .fs .w{color:var(--minor)} .sys.fab .fs .d{color:var(--major)} .sys.fab .fs .c{color:var(--crit)}
+   .sys.fab .st i{width:7px;height:7px}
+   /* 상태 줄은 FAB 타일과 아바타 카드가 같이 쓴다 */
+   .sys .st{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;
+@@ -291,6 +312,8 @@
+     /* 폭이 좁아지면 카드가 세로로 쌓여 어차피 한 화면에 안 들어간다 */
+     .open{padding:32px 20px;overflow-y:auto;align-items:flex-start}
+     .ohead{flex-wrap:wrap;gap:16px}
++    .otr{position:static;align-items:flex-start}
++    .otr .kk,.otr .othm{justify-content:flex-start}
+     .oask{padding-top:40px}
+     .oask h2{font-size:40px}
+     .sysgrid{padding-top:32px}
+@@ -309,6 +332,8 @@
+      한 화면을 포기하고 스크롤을 돌려준다. 잘라 버리면 FAB 을 아예 못 고른다. */
+   @media(max-height:600px){
+     .open{overflow-y:auto;align-items:flex-start}
++    .otr{position:static;align-items:flex-start;margin-bottom:16px}
++    .otr .kk,.otr .othm{justify-content:flex-start}
+   }
+ 
+   /* ── 상단 바 ── 시안: sticky · padding 18px 36px · gap 28px.
+@@ -325,33 +350,37 @@
+   .logo .mk{display:block;width:9px;height:9px;border-radius:99px;background:var(--ok);flex:none;
+             animation:pulse 2.4s ease-in-out infinite}
+   .logo .mk i{display:none}
+-  .logo b{display:block;font-size:16px;letter-spacing:.14em;font-weight:700;line-height:1.1}
++  .logo b{display:block;font-size:13px;letter-spacing:.08em;font-weight:700;line-height:1.1}   /* 2026-10-19 16px → 13px (AMHS FAB Scoring system) */
+   .logo span span{display:block;font-size:10.5px;color:var(--tx3);letter-spacing:.02em}
+   /* 지금 어느 시스템을 보고 있는지 — 누르면 드롭다운(ALL + FAB 5 · 숨김 모드면 FAB 5)이 열린다.
+      오프닝(전체 화면)은 드롭다운 맨 아래 항목으로. */
+   .syswrap{position:relative;display:flex;align-items:center}
+-  .syschip{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:99px;
+-           border:1px solid var(--cyline);background:var(--cybg);color:var(--cy);
+-           font:inherit;font-size:12px;font-weight:600;line-height:1;letter-spacing:.06em;
++  /* ★2026-10-19 고객: "바꾸기 쪽 크게 — 콤보박스인지 알기 어렵다". 글자·여백을 키우고
++     오른쪽에 ▾(열림) 표시를 붙여 고르는 상자로 읽히게 한다. 열리면 ▾ 가 뒤집힌다. */
++  .syschip{display:flex;align-items:center;gap:10px;padding:9px 14px 9px 18px;border-radius:12px;
++           border:1.5px solid var(--cyline);background:var(--cybg);color:var(--cy);
++           font:inherit;font-size:15px;font-weight:700;line-height:1;letter-spacing:.06em;
+            cursor:pointer;white-space:nowrap}
+   .syschip:hover,.syschip[aria-expanded="true"]{border-color:var(--cy)}
+-  .syschip u{text-decoration:none;color:var(--tx3);font-weight:400;letter-spacing:0}
++  .syschip u{text-decoration:none;color:var(--tx2);font-size:13px;font-weight:500;letter-spacing:0}
+   .syschip[aria-expanded="true"] u{color:var(--cy)}
++  .syschip::after{content:'▾';font-size:15px;color:var(--cy);margin-left:2px;transition:transform .15s}
++  .syschip[aria-expanded="true"]::after{transform:rotate(180deg)}
+   /* 드롭다운 — 시안의 그림자·둥근 패널. ★id 에 'open' 이 안 들어가는 이름
+      (#sysdd)을 쓴다: 오프닝 숨김 검사가 '#open' 문자열로 잡는다. */
+-  .sysdd{position:absolute;top:calc(100% + 12px);left:0;z-index:40;min-width:210px;padding:8px;
++  .sysdd{position:absolute;top:calc(100% + 10px);left:0;z-index:40;min-width:250px;padding:8px;
+          border-radius:14px;background:var(--panel2);border:1px solid var(--line2);
+          box-shadow:var(--shadow);display:flex;flex-direction:column;gap:2px}
+   .sysdd button{display:flex;align-items:center;justify-content:space-between;gap:16px;
+-                padding:9px 12px;border:0;border-radius:9px;background:transparent;color:var(--tx2);
++                padding:12px 14px;border:0;border-radius:9px;background:transparent;color:var(--tx2);
+                 cursor:pointer;white-space:nowrap;text-align:left;
+-                font:inherit;font-size:12.5px;line-height:1;font-weight:500}
++                font:inherit;font-size:14.5px;line-height:1;font-weight:500}
+   .sysdd button:hover{background:var(--panel);color:var(--tx)}
+   .sysdd button.on{background:var(--tabbg);color:var(--cy);font-weight:700}
+   .sysdd button:disabled{opacity:.45;cursor:not-allowed}
+-  .sysdd button small{font-size:11px;color:var(--tx3);font-weight:400}
++  .sysdd button small{font-size:12px;color:var(--tx3);font-weight:400}
+   .sysdd hr{border:0;border-top:1px solid var(--line2);margin:4px 2px}
+-  .sysdd button.all{color:var(--tx3);font-size:12px}
++  .sysdd button.all{color:var(--tx3);font-size:13px}
+   /* 테마 세그먼트 4칸 — 켜진 칸은 탭과 같은 --tabbg/--cy. #themechip-cd 는
+      옛 아이콘 자리(id 만 남기고 숨김). */
+   .themeseg{order:1;display:flex;gap:3px;padding:3px;border-radius:99px;
+@@ -755,6 +784,14 @@
+   .llmcard{display:flex;align-items:stretch;flex-wrap:wrap;background:var(--panel);
+            border:1px solid var(--line);border-radius:20px}
+   .llmcard .llmnow{flex:1 1 560px;min-width:0}
++  /* ★2026-10-19 고객: "LLM 최근 판단(정상 · 08:57 · 확신도 90% …) 삭제" + 단추는 [과거 분석내용 보기]로.
++     첫 줄(라벨·등급 배지·시각·확신도)만 화면에서 빼고, 판단 문장(크게)과 근거는 남긴다. 단추는 오른쪽 위.
++     #llmnow 를 채우는 코드(renderLlmNow · 과거 탭)와 상단 LLM 램프는 그대로 돈다. */
++  .llmcard .llmnow .r1{float:right;margin:0 0 6px 18px}
++  .llmcard .llmnow .r1l{display:none}   /* 첫 줄(LLM 최근 판단·등급·시각·확신도) — 아래 .llmnow 규칙보다 세게 */
++  /* ★2026-10-19 고객: 판단 문장 글자 크게 (16px → 19px) */
++  .llmcard .llmnow .jt{margin:2px 0 0;font-size:19px;line-height:1.55}
++  .llmcard .llmnow .basis{font-size:14px}
+   /* ── LLM 최근 판단 (시안 카드) ──
+      1행 라벨·등급 배지·시각·모델·칩·[과거 LLM 판단 보기] / 2행 판단 문장 / 3행 근거.
+      관제실에서 멀찍이 서서도 읽히게 판단 문장은 16px 600 (현장 요청). */
+@@ -915,6 +952,10 @@
+   /* ★넓은 모달은 폭만 다르다 — 그림자를 다시 적어 두니(하드코딩 rgba) 같은
+      층의 모달 둘이 서로 다른 깊이로 떠 보였다. .gbox 의 --shadow 를 쓴다. */
+   .gbox.wide{max-width:1280px}
++  /* 팝업만 보기(?…&view=popup) — 다른 사이트에서 띄운다. 마스크·그림자 없이 화면 가득, 닫기 없음 */
++  body.popup-only .gmask{position:static;background:none;padding:12px;display:block}
++  body.popup-only .gbox{max-width:none;max-height:none;border-radius:12px;box-shadow:none}
++  body.popup-only #gclose,body.popup-only #gpinx{display:none}
+   /* 헤더는 sticky — 긴 결과를 내려도 제목과 닫기 버튼이 남아 있어야 한다.
+      ★배경을 상자와 같은 --panel2 로 맞췄다: --panel 이면 상자 안에 띠가 하나 더 생겨
+        모달이 두 겹으로 보였다. */
+@@ -1108,31 +1149,31 @@
+       <span class="scan"></span><span class="core"></span>
+     </div>
+     <div class="ohead">
+-      <div class="lf"><span class="mk"><i></i></span><span>FAB OPERATIONS INTELLIGENCE</span></div>
+       <div class="cnt"><span id="opver">V1.0</span></div>
+     </div>
+-    <div class="oeye">LLM ANOMALY WATCH</div>
+-    <div class="oask">
+-      <h2>실시간 이상감지 &amp;<br><em>관제</em> 플랫폼</h2>
+-      <p>FAB별 스코어로 이상을 탐지·예측해 보고합니다.
+-         OHT 로드를 통해 현장을 직접 확인할 수 있습니다.</p>
+-    </div>
+-    <div class="ostat">
++    <!-- ★2026-10-19 지표 · 테마/숨김 — 화면 오른쪽 맨 위 (표제 위 빈 자리) -->
++    <div class="otr">
+       <div class="kk">
+         <span class="k"><span class="lb">SYSTEMS</span><span class="vl" id="opk-sys">–</span></span>
+         <span class="k cy"><span class="lb">LATENCY</span><span class="vl" id="opk-lat">–</span></span>
+         <span class="k wn"><span class="lb">OPEN ALERTS</span><span class="vl" id="opk-alert">–</span></span>
+       </div>
+-      <span class="lv"><i></i><span id="opcnt">MONITORING LIVE</span></span>
++      <div class="othm">
++        <span class="cap">테마</span>
++        <button type="button" data-theme="dark">다크</button>
++        <button type="button" data-theme="light">화이트</button>
++        <button type="button" data-theme="navy">네이비</button>
++        <button type="button" data-theme="contrast">고대비</button>
++        <span class="cap">숨김</span>
++        <button type="button" data-hidebtn="1">숨김</button>
++      </div>
+     </div>
+-    <div class="othm">
+-      <span class="cap">테마</span>
+-      <button type="button" data-theme="dark">다크</button>
+-      <button type="button" data-theme="light">화이트</button>
+-      <button type="button" data-theme="navy">네이비</button>
+-      <button type="button" data-theme="contrast">고대비</button>
+-      <span class="cap">숨김</span>
+-      <button type="button" data-hidebtn="1">숨김</button>
++    <div class="oask">
++      <h2>실시간 FAB 위험도<br><em>관제</em> 플랫폼</h2>
++      <p>FAB의 상태를 점수로 나타내고 이상감지 및 원인을 확인할 수 있습니다.</p>
++    </div>
++    <div class="ostat">
++      <span class="lv"><i></i><span id="opcnt">MONITORING LIVE</span></span>
+     </div>
+     <div class="sysgrid" id="sysgrid"></div>
+     <div class="note" id="opennote"></div>
+@@ -1142,7 +1183,7 @@
+ <div class="top">
+   <div class="logo">
+     <span class="mk"><i></i></span>
+-    <span><b>AMHS SENTINEL</b><span>LLM 실시간 이상감지 · 관제</span></span>
++    <span><b>AMHS FAB Scoring system</b></span>
+   </div>
+   <!-- 지금 보는 시스템 — 누르면 드롭다운(ALL + FAB 5 · 숨김 모드면 FAB 5). 맨 아래 '전체 화면에서 고르기' 가 오프닝을 연다 -->
+   <div class="syswrap">
+@@ -1189,7 +1230,7 @@
+ <div class="livehead">
+   <!-- 고객: "맨 LLM 최근 판단 위에 내용 하나 붙여 주라" — 이 관제가 어떤 순서로 보는지.
+        글자 모양은 탭 머리 설명(.tabhead p)과 같다 — 따로 꾸미지 않는다. -->
+-  <div class="tabhead" id="livenote"><p>스코어 시스템은 문제 되는 FAB를 점수 예측(룰베이스 기반)을 하고 문제를 파악합니다. 이후에 OHT 로드를 통해서 상태를 확인합니다.</p></div>
++  <div class="tabhead" id="livenote"><p>FAB Scoring System 은 FAB의 상태를 점수로 확인할 수 있습니다. 각 시간대별로 점수를 클릭하면 해당 점수가 부여된 원인을 확인할 수 있습니다.</p></div>
+   <div class="llmcard">
+     <div id="llmnow" class="llmnow hidden"></div>
+   </div>
+@@ -1226,13 +1267,14 @@
+           <option value="120">2시간</option>
+           <option value="360">6시간</option>
+         </select>
++        <button class="act" id="glink" title="이 그래프를 바로 여는 주소를 복사합니다">주소 복사</button>
+         <button class="act" id="gclose">닫기</button>
+       </div>
+     </div>
+     <!-- ★그 1분 동안 OHT 가 실제로 어떻게 움직였나 — 월드모델로 재생한다.
+          현재 상태의 **증거 자료**로 쓰인다. -->
+     <div class="ohtbar" id="ohtbar">
+-      <span class="note">그 1분 OHT 재생</span>
++      <span class="note">FAB Play Back</span>
+       <span class="ohtbtns" id="ohtbtns"></span>
+       <span class="note" id="ohthid"></span>
+       <span class="note" id="ohtnote"></span>
+@@ -1875,6 +1917,10 @@
+ const api = async (u,o) => (await fetch(withSys(u),o)).json();
+ const post = (u,b) => api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+ const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
++/* ★2026-10-19 고객: LLM 판단 문장 표기 — '발동 사유' → '원인', '아닙니다' → '아닌 것으로 추정됩니다'.
++   문장은 LLM 이 쓴다(질문에 '발동 사유:' 줄이 있어 그대로 따라 쓴다 — llm_client). 저장된 CSV 는
++   그대로 두고 **보여 줄 때만** 바꾼다. LLM 카드 · 그래프 팝업 'LLM 판단' · 과거 분석내용 표가 같이 쓴다. */
++const llmTx = s => String(s??'').replace(/발동\s*사유/g, '원인').replace(/아닙니다/g, '아닌 것으로 추정됩니다');
+ const hhmm = s => (s||'').slice(11,16);
+ /* 점수 등급 — 컷은 시스템마다 다르다 (정책 탭에서 설정, /api/status 가
+    그 시스템 값을 내려준다). 위험·초위험은 사람 확인이 필요한 구간. */
+@@ -2147,19 +2193,23 @@
+           <span class="cd dsp">${esc(s.code)}</span>
+           <span class="kind">${esc(s.kind)}</span>
+         </span>
+-        <span class="st ${s.ready?'live':''}"><i></i>${s.ready?'운영 중':'준비 중'}</span>
++        ${s.ready ? `<span class="scv" title="지금 스코어"><b>–</b><span></span></span>
++        <span class="fs"><span class="dim">불러오는 중…</span></span>`
++          : `<span class="st"><i></i>준비 중</span>`}
+       </button>`).join('')}</div>`;
+   document.querySelectorAll('#sysgrid .sys[data-sys]').forEach(b =>
+     b.onclick = () => pickSystem(b.dataset.sys));
+   syncOpenTheme();
+   openStats();
++  setTimeout(openFabStats, 0);   // 주소로 바로 관제에 들어가면 오프닝은 곧 닫힌다 — 그땐 안 받는다
+ 
+   const wip = shown.filter(s => !s.ready).map(s => s.code).join(' · ');
++  // ★2026-10-19 안내 문구 변경 (예전: 'FAB 을 고르면 그 구역 점수(area_score)로만 봅니다.' ·
++  //   'N개 화면 모두 같은 주기로 실시간 수집됩니다.')
+   $('#opennote').innerHTML =
+-    (all ? `<div><b>ALL</b> 은 전체 통합, FAB 을 고르면 그 구역 점수(area_score)로만 봅니다.</div>`
+-         : `<div>FAB 을 고르면 그 구역 점수(area_score)로만 봅니다.</div>`)
+-    + (wip ? `<div>${esc(wip)} 는 아직 수집이 붙지 않았습니다 — 자리만 잡아 뒀습니다.</div>`
+-           : `<div>${shown.length}개 화면 모두 같은 주기로 실시간 수집됩니다.</div>`)
++    (all ? `<div><b>ALL</b> 은 전체 통합, 담당 FAB을 선택하시면 실시간 이상감지 내역 및 분석 내용을 확인할 수 있습니다.</div>`
++         : `<div>담당 FAB을 선택하시면 실시간 이상감지 내역 및 분석 내용을 확인할 수 있습니다.</div>`)
++    + (wip ? `<div>${esc(wip)} 는 아직 수집이 붙지 않았습니다 — 자리만 잡아 뒀습니다.</div>` : '')
+     + (SYS ? `<div style="padding-top:6px"><kbd>Esc</kbd> 를 누르면 돌아갑니다.</div>` : '');
+ }
+ 
+@@ -2175,6 +2225,47 @@
+    ★시안의 1,284 · 240ms · 3 은 **그림에 박힌 숫자**다. 그대로 두면 거짓이
+      되므로 실제 값으로 채운다. 아직 못 받았으면 '–' 로 둔다 — 0 으로 채우면
+      '이상 없음' 으로 읽힌다. */
++/* ★2026-10-19 FAB 칸 — '운영 중' 대신 **지금** 스코어 · 지금 알람 (고객: 하루치 말고 실시간만).
++   알람 = 등급 카운터(alarm_count) — 최근 N분(기본 10)에 기준을 넘었으면 경계중·위험중·초위험중 + 횟수.
++   관제 표 '알람' 칸과 같은 배지다. 안 걸렸으면 '없음'. 횟수 세부는 말풍선(title)에만.
++   ★/api/open/now **한 번**으로 다섯 FAB 을 받는다. 처음엔 칸마다 /api/feed 를 불렀는데 하루치 전체를
++     다섯 번 만들고 다섯 FAB 을 '보는 중' 으로 찍어(분당 LLM) 오프닝이 느려졌다 (server.py 주석).
++   오프닝이 떠 있는 동안 1분마다 다시 받는다(자료가 1분 단위). */
++const LV_COLOR = {'정상':'var(--ok)', '경계':'var(--minor)', '위험':'var(--major)', '초위험':'var(--crit)'};
++async function openFabStats(){
++  // 오프닝이 실제로 보일 때만 — 주소로 바로 관제에 들어가면 오프닝은 곧 닫힌다
++  const o = $('#open');
++  if(!o || o.classList.contains('hidden')) return;
++  const cards = [...document.querySelectorAll('#sysgrid .sys.fab[data-sys]')];
++  let all = null;
++  try{ all = (await (await fetch('/api/open/now')).json()).fabs || {}; }catch(e){ all = null; }
++  cards.forEach(b => {
++    const fs = b.querySelector('.fs'), sc = b.querySelector('.scv');
++    if(!fs || !sc) return;
++    const d = all ? all[b.dataset.sys] : null;
++    if(!d || !d.ok){
++      sc.querySelector('b').textContent = '–'; sc.querySelector('span').textContent = '';
++      fs.innerHTML = `<span class="dim">${all ? '자료 없음' : '불러오지 못했습니다'}</span>`;
++      return;
++    }
++    sc.querySelector('b').textContent = Math.round(+d.score);
++    sc.querySelector('b').style.color = LV_COLOR[d.level] || '';
++    sc.querySelector('span').textContent = d.level || '';
++    sc.title = `지금 스코어 · ${d.datetime || ''}`;
++    const a = d.alarm;
++    if(!a){ fs.innerHTML = '<span class="dim">알람 —</span>'; fs.title = ''; return; }
++    if(!a.on){ fs.innerHTML = '<span class="dim">알람 미적용</span>'; fs.title = '정책 탭에서 이 FAB 의 등급 카운터가 꺼져 있습니다'; return; }
++    const badge = a.lv
++      ? `<span class="chip alm lv${esc(a.lv.replace('중', ''))}">${esc(a.lv)}<b>${
++          a.lv === '초위험중' ? a.c : a.lv === '위험중' ? a.d : a.w}</b></span>`
++      : '<span class="dim">없음</span>';
++    fs.innerHTML = `알람 ${badge}`;          // 지금 알람만 (고객: 실시간만)
++    fs.title = `지금(${d.datetime || ''}) — 최근 ${a.min}분 경계 이상 ${a.w}회 · 위험 이상 ${a.d}회 · 초위험 ${a.c}회`
++      + (a.why ? `\n${a.why}` : '');
++  });
++}
++setInterval(() => { const o = $('#open'); if(o && !o.classList.contains('hidden')) openFabStats(); }, 60000);
++
+ async function openStats(){
+   const set = (id, v) => { const el = $('#' + id); if(el) el.textContent = v; };
+   const shown = sysShown();                       // 숨김 모드면 ALL 은 안 센다
+@@ -3663,7 +3754,7 @@
+   const r = a && a.latest;
+   box.classList.remove('hidden');
+   // 1행 오른쪽 버튼 — 카드 전체 클릭과 같은 곳으로 간다. 버튼은 stopPropagation 으로 두 번 열리는 걸 막는다
+-  const accBtn = `<button class="llmacc" type="button">과거 LLM 판단 보기</button>`;
++  const accBtn = `<button class="llmacc" type="button">과거 분석내용 보기</button>`;   // 2026-10-19 문구 (예전: 과거 LLM 판단 보기)
+   const wireAcc = () => {
+     box.onclick = () => openAcc(past || null);
+     const b = box.querySelector('.llmacc');
+@@ -3699,7 +3790,7 @@
+   const model = String(r.모델 || LLM_MODEL || '').trim();
+   const meta = `<span class="meta">· ${model ? esc(model) + ' · ' : ''}1분 추론</span>`;
+   const verdict = r.판정 ? `<span class="meta">판정 ${esc(r.판정)}</span>` : `<span class="meta">채점 대기</span>`;
+-  const basisTx = [r.근거 ? '근거 — ' + esc(r.근거) : '', r.조치 ? '조치 — ' + esc(r.조치) : '']
++  const basisTx = [r.근거 ? '근거 — ' + esc(llmTx(r.근거)) : '', r.조치 ? '조치 — ' + esc(llmTx(r.조치)) : '']
+                   .filter(Boolean).join(' <span class="dim">·</span> ');
+   box.innerHTML =
+       `<div class="r1"><div class="r1l"><span class="tag">LLM ${past ? '판단' : '최근 판단'}</span>`
+@@ -3714,9 +3805,10 @@
+          + `<span class="bar"><i style="width:${c}%;background:${col}"></i></span></span>`)
+     + verdict + `</div>`
+     + accBtn + `</div>`
+-    + (r.판단 ? `<p class="jt">${esc(r.판단)}</p>`
++    + (r.판단 ? `<p class="jt">${esc(llmTx(r.판단))}</p>`
+               : `<p class="jt err">${esc(r.오류||'')}</p>`)
+-    + `<p class="basis">${basisTx || '<span class="dim">근거 없음 — 클릭하면 전체 내역이 열립니다</span>'}</p>`;
++    // ★2026-10-19 고객: '근거 없음' 문구는 안 낸다 — 근거·조치가 있을 때만 줄을 만든다
++    + (basisTx ? `<p class="basis">${basisTx}</p>` : '');
+   box.title = '클릭하면 전체 내역이 열립니다';
+   wireAcc();
+ }
+@@ -3814,7 +3906,7 @@
+              ? `<br><span class="note" style="color:var(--crit);font-size:10.5px;white-space:nowrap">사람 확인 필요</span>` : ''}</td>
+         <td>${r.실제이상 ? `<b style="color:${r.실제이상==='예'?'var(--crit)':'var(--ok)'}">${esc(r.실제이상)}</b>` : '<span class="dim">–</span>'}</td>
+         <td>${r.확신도!=='' && r.확신도!=null ? esc(r.확신도)+'%' : '<span class="dim">–</span>'}</td>
+-        <td title="${esc(r.근거||'')}">${r.판단 ? esc(r.판단)
++        <td title="${esc(llmTx(r.근거||''))}">${r.판단 ? esc(llmTx(r.판단))
+              : (r.오류 ? `<span style="color:var(--crit)">${esc(r.오류)}</span>` : '<span class="dim">–</span>')}</td>
+         <td>${vchip((r.판정||'').trim(), r)}</td>
+         <td class="note">${esc(r.판정근거||'') || (r.대기분!=null
+@@ -5165,6 +5257,14 @@
+    그 FAB 선 색으로 차서 범례를 겸한다 (색만으로 구분하지 않게 이름을 같이). */
+ function fillFabSel(elSel, chosen, isScore, allOn){
+   const el = $(elSel);
++  /* ★2026-10-19 고객: "추이 겹쳐 보기(FAB) 불필요 — 삭제". 칸을 비우고 숨긴다. 고른 FAB 도 비운다 —
++     비어 있으면 추이에 FAB 선이 안 그려지고, 구간 그래프(graphFabs)에도 안 넘어간다.
++     본선(ALL·FAB 막대)은 늘 켜진 채(ALL_ON 기본값)라 그래프는 예전과 같다.
++     아래 원래 코드는 되살릴 때를 위해 그대로 둔다. */
++  if(chosen && chosen.clear) chosen.clear();
++  if(el){ el.classList.add('hidden'); el.innerHTML = ''; el.dataset.sig = ''; }
++  return;
++  // eslint-disable-next-line no-unreachable
+   if(!el) return;
+   /* 스코어가 아닌 지표(분·건·%)를 보고 있으면 숨긴다 — 눈금이 다른 축에
+      0~100 점수를 얹을 수는 없다. */
+@@ -5331,6 +5431,7 @@
+     const [cs, fd] = await Promise.all([api('/api/cases?all=1'), api('/api/feed')]);
+     CASES = cs.cases||[];
+     FEED  = fd.rows||[];
++    gRefresh();
+     if(fd.alarm) ALARM = fd.alarm;
+     ALARM_FAB = fd.alarm_fab || {};
+     setFabs(fd);                       // FAB 컬럼 (머리글은 바뀔 때만 재생성)
+@@ -5444,6 +5545,7 @@
+       else return;
+     }
+     PFEED = fd.rows || [];
++    gRefresh();
+     PROW_CAP = ROW_STEP;               // 날짜가 바뀌었으니 처음부터
+     if(fd.alarm) ALARM = fd.alarm;
+     ALARM_FAB = fd.alarm_fab || {};
+@@ -5747,9 +5849,12 @@
+   const r = FEED.find(x=>x.at===at) || PFEED.find(x=>x.at===at);
+   const title = r
+     ? `${r.datetime} · ${r.area} · ${Math.round(r.score)}점 ${r.emoji} ${r.level}`
+-    : '구간 그래프';
++    : `구간 그래프 · ${String(at).slice(0, 16).replace('T', ' ')}${SYS ? ' · ' + SYS : ''}`;
+   $('#gtitle').textContent = title;
+   $('#gmask').classList.remove('hidden');
++  /* ★더블클릭한 그 분을 주소에 싣는다(?sys=M16HUB&at=2026-10-16_23:59) — 그 주소를 열면
++     이 그래프가 바로 뜬다. 공유·즐겨찾기용. */
++  gSetUrl(at);
+   fillHid(r);
+   // ★제목 그대로를 증거 라벨로 넘긴다 — 팝업에 어느 건인지 찍힌다
+   fillOht(r ? (r.datetime || at) : at, title);
+@@ -5773,7 +5878,11 @@
+     const svg = await fetch(withSys(`/api/graph?at=${encodeURIComponent(GAT)}&minutes=${m}${
+           graphFabs()}&theme=${document.documentElement.getAttribute('data-theme')||'dark'}`
+           )).then(r=>r.text());
+-    $('#gbody').innerHTML = svg + `<div id="gpin"></div>`;
++    /* ★고객(2026-10-16): 스코어 → 원인 → 실제지표 그래프. 서버가 두 그림 사이에
++       <!--GPIN--> 자리를 둔다(graphs.render split). 자리가 없는 옛 서버면 예전처럼 맨 아래. */
++    $('#gbody').innerHTML = svg.includes('<!--GPIN-->')
++      ? svg.replace('<!--GPIN-->', `<div id="gpin"></div>`)
++      : svg + `<div id="gpin"></div>`;
+     bindGraphPin();
+     bindCellZoom();
+     pinAt(GAT);             // 더블클릭한 그 분의 원인부터 보여 준다
+@@ -5785,15 +5894,25 @@
+      이름)을 달아 보낸다. 그 이름으로 /api/graph1 을 받아 그 자리에 띄운다.
+      큰 그림에서 다시 더블클릭하거나 '← 전체 그래프' 를 누르면 돌아간다. */
+ function bindCellZoom(){
+-  const svg = $('#gbody svg');
++  $('#gbody').ondblclick = null;
++  // 그림이 두 장(스코어 / 지표 격자) — 칸(data-m)이 있는 쪽에 건다
++  const svg = [...document.querySelectorAll('#gbody svg')].find(s => s.querySelector('rect[data-m]'));
+   if(!svg) return;
+-  svg.addEventListener('dblclick', e => {
+-    const hit = [...svg.querySelectorAll('rect[data-m]')].find(r => {
+-      const b = r.getBoundingClientRect();
+-      return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+-    });
+-    if(hit) drawOne(hit.getAttribute('data-m'));
++  const cellAt = e => [...svg.querySelectorAll('rect[data-m]')].find(r => {
++    const b = r.getBoundingClientRect();
++    return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+   });
++  /* ★원인 칸(#gpin)이 이 그림 **위**에 있다(2026-10-16). 더블클릭의 첫 클릭이 그 분을
++     고정하면서 원인 칸 높이가 바뀌면 칸이 밀려, 둘째 클릭·dblclick 은 원인 칸에 떨어진다.
++     그래서 첫 번째 누른 순간의 칸을 기억하고, dblclick 은 #gbody 에서 받는다. */
++  let downHit = null, downAt = 0;
++  svg.addEventListener('mousedown', e => {
++    if(e.detail <= 1){ downHit = cellAt(e); downAt = e.timeStamp; }
++  });
++  $('#gbody').ondblclick = e => {
++    const hit = downHit; downHit = null;
++    if(hit && hit.isConnected && e.timeStamp - downAt < 800) drawOne(hit.getAttribute('data-m'));
++  };
+ }
+ async function drawOne(name){
+   if(!GAT || !name) return;
+@@ -5805,10 +5924,13 @@
+           + `&name=${encodeURIComponent(name)}`
+           + `&theme=${document.documentElement.getAttribute('data-theme')||'dark'}`)).then(r=>r.text());
+     $('#gbody').innerHTML = `<div style="margin-bottom:8px"><button class="act" id="gback">← 전체 그래프</button>`
+-      + ` <span class="dim">그림을 다시 더블클릭해도 돌아갑니다</span></div>` + svg + `<div id="gpin"></div>`;
++      + ` <span class="dim">그림을 다시 더블클릭해도 돌아갑니다</span></div>` + `<div id="gpin"></div>` + svg;
+     $('#gback').onclick = () => drawGraphAll();
+     const big = $('#gbody svg');
+-    if(big) big.addEventListener('dblclick', () => drawGraphAll());
++    // 원인 칸이 그림 위라 첫 클릭에 그림이 밀릴 수 있다 — 그림에서 시작한 더블클릭이면 돌아간다 (bindCellZoom 주석)
++    let downAt = -1e9;
++    if(big) big.addEventListener('mousedown', e => { if(e.detail <= 1) downAt = e.timeStamp; });
++    $('#gbody').ondblclick = e => { if(e.timeStamp - downAt < 800) drawGraphAll(); };
+     bindGraphPin();
+     pinAt(GAT);
+   }catch(e){ $('#gbody').innerHTML = '<div class="empty">그래프를 불러오지 못했습니다</div>'; }
+@@ -5831,40 +5953,47 @@
+   const box = $('#gpin');
+   if(!box || !at) return;
+   const r = FEED.find(x=>x.at===at) || PFEED.find(x=>x.at===at);
+-  if(!r){ box.innerHTML = ''; return; }
+-  const g = gradeOf(+r.score||0);
++  /* ★주소로 바로 연 경우(?at=… · view=popup) 그 분 행이 목록에 아직(또는 아예) 없다.
++     원인·LLM 판단은 /api/cause 가 행 없이 준다 — 그 둘만 그리고, 행이 오면 gRefresh 가 다시 그린다. */
++  box.dataset.lite = r ? '' : '1';
++  // 주소로 연 팝업 — 행이 늦게 와서 제목이 '구간 그래프 · 시각' 이면 행이 온 지금 채운다
++  if(r && at === GAT && $('#gtitle').textContent.startsWith('구간 그래프')){
++    $('#gtitle').textContent = `${r.datetime} · ${r.area} · ${Math.round(r.score)}점 ${r.emoji} ${r.level}`;
++    fillHid(r);
++  }
++  const g = r ? gradeOf(+r.score||0) : null;
+   /* 발동 룰은 요약(한글 한 줄)을 룰 단위로 끊어 칩으로 — 원문(reason_raw)은
+      안 넣는다. 기계 글자를 통째로 뿌리면 읽을 것이 아니라 덮는 것이 된다. */
+-  const rules = String(r.reason||'').split(/\s*·\s*|\r?\n/)
++  const rules = String((r||{}).reason||'').split(/\s*·\s*|\r?\n/)
+       .map(x=>x.trim()).filter(Boolean);
+   const rchip = rules.length
+     ? rules.map(x=>`<span class="zchip">${esc(x)}</span>`).join(' ')
+     : '<span class="dim">—</span>';
+-  const met = (r.metrics||[]).map(m=>`<span class="zchip mono" title="${
++  const met = ((r||{}).metrics||[]).map(m=>`<span class="zchip mono" title="${
+       esc(m.label||'')}">${esc(m.raw)}</span>`).join(' ') || '<span class="dim">—</span>';
+   const fab = FABS.map(f=>{
+-    const v = (r.fab||{})[f];
++    const v = ((r||{}).fab||{})[f];
+     if(v===undefined || v===null) return '';
+     const lv = fabLv(v, FCUTS[f]);
+     return `<span class="zchip" style="color:${fabTx(lv)}">${esc(f)} ${v}</span>`;
+   }).join(' ') || '<span class="dim">—</span>';
+-  box.innerHTML = `<div style="margin-top:12px;padding:12px 14px;border:1px solid var(--line2);
++  box.innerHTML = `<div style="margin:12px 0;padding:12px 14px;border:1px solid var(--line2);
+       border-radius:10px;background:var(--panel)">
+     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+-      <b class="mono">${esc((r.datetime||at).slice(0,16))}</b>
+-      <span class="chip lv${esc(r.level)}">${esc(r.level)}</span>
++      <b class="mono">${esc(((r && r.datetime) || at).slice(0,16).replace('T', ' '))}</b>
++      ${r ? `<span class="chip lv${esc(r.level)}">${esc(r.level)}</span>
+       <b class="mono" style="font-size:15px;color:${g.c}">${Math.round(r.score)}점</b>
+-      <span class="dim">주 영역 ${esc(r.area||'—')}</span>
++      <span class="dim">주 영역 ${esc(r.area||'—')}</span>` : `<span class="dim">${esc(SYS||'')}</span>`}
+       <button class="act" id="gpinx" style="margin-left:auto">닫기</button>
+     </div>
+     <table style="width:100%;font-size:12px">
+-      <tr><td class="dim" style="width:88px;vertical-align:top;font-size:13px;font-weight:700;color:var(--tx)">원인</td><td id="gcause"><span class="dim">불러오는 중…</span></td></tr>
+-      <tr><td class="dim" style="vertical-align:top">LLM 판단</td><td id="gllm"><span class="dim">—</span></td></tr>
+-      <tr><td class="dim">실제지표</td><td>${met}</td></tr>
++      <tr><td class="dim" style="width:100px;vertical-align:top;font-size:13px;font-weight:700;color:var(--tx)">원인</td><td id="gcause"><span class="dim">불러오는 중…</span></td></tr>
++      <tr><td class="dim" style="vertical-align:top">분석 내용</td><td id="gllm"><span class="dim">—</span></td></tr>
++      ${r ? `<tr><td class="dim">점수 영향 지표</td><td>${met}</td></tr>
+       <tr><td class="dim">FAB 점수</td><td>${fab}</td></tr>
+-      <tr><td class="dim">발동 룰</td><td>${rchip}</td></tr>
++      <tr><td class="dim">발동 룰</td><td>${rchip}</td></tr>` : ''}
+     </table></div>`;
+-  const x = $('#gpinx'); if(x) x.onclick = () => { box.innerHTML = ''; };
++  const x = $('#gpinx'); if(x) x.onclick = () => { box.innerHTML = ''; box.dataset.lite = ''; };
+   box.dataset.at = at;
+   fetch(withSys(`/api/cause?at=${encodeURIComponent(at)}`)).then(q=>q.json()).then(d => {
+     const el = $('#gcause');
+@@ -5895,18 +6024,72 @@
+       lg.innerHTML = !L ? '<span class="dim">이 분의 1분 판단 기록이 없습니다</span>'
+         : L['오류'] && !L['판단'] ? `<span class="dim">판단 실패 — ${esc(L['오류'])}</span>`
+         : `${L['실제이상'] ? `<span class="zchip">${L['실제이상'] === '예' ? '대응 필요' : '대응 불필요'}</span> ` : ''}`
+-          + `${esc(L['판단'] || '')}${L['확신도'] ? ` <span class="dim">· 확신도 ${esc(L['확신도'])}</span>` : ''}`
+-          + (L['근거'] ? `<div class="note" style="margin-top:2px">근거 — ${esc(L['근거'])}</div>` : '')
+-          + (L['조치'] ? `<div class="note">조치 — ${esc(L['조치'])}</div>` : '');
++          + `${esc(llmTx(L['판단'] || ''))}${L['확신도'] ? ` <span class="dim">· 확신도 ${esc(L['확신도'])}</span>` : ''}`
++          + (L['근거'] ? `<div class="note" style="margin-top:2px">근거 — ${esc(llmTx(L['근거']))}</div>` : '')
++          + (L['조치'] ? `<div class="note">조치 — ${esc(llmTx(L['조치']))}</div>` : '');
+     }
+   }).catch(() => { const el = $('#gcause'); if(el) el.innerHTML = '<span class="dim">불러오지 못했습니다</span>'; });
+ }
+ 
+ $('#gmin').onchange = drawGraph;
+-$('#gclose').onclick = () => $('#gmask').classList.add('hidden');
+-$('#gmask').onclick = e => { if(e.target.id==='gmask') $('#gmask').classList.add('hidden'); };
++/* 주소의 at — 사람이 읽는 24시간 표기, **분까지** 2026-10-16_23:59 (자료가 1분 단위다).
++   내부 at(서버 isoformat, 2026-10-16T23:59:00)으로 읽을 때 '_'→'T', 초 ':00' 을 붙인다.
++   ':' 가 %3A 로 안 바뀌게 직접 붙인다. */
++function gSetUrl(at){
++  const q = new URLSearchParams(location.search), v = q.get('view');
++  q.delete('at'); q.delete('view');
++  let s = q.toString();
++  if(at) s += (s ? '&' : '') + 'at=' + String(at).slice(0, 16).replace('T', '_')
++            + (v ? '&view=' + encodeURIComponent(v) : '');
++  try{ history.replaceState(null, '', location.pathname + (s ? '?' + s : '')); }catch(e){}
++}
++/* 다른 사이트에서 띄울 주소 — 팝업만(view=popup): ?sys=M16HUB&at=2026-10-16_23:59&view=popup */
++function gLink(){
++  const q = new URLSearchParams(location.search);
++  q.delete('at'); q.delete('view');
++  if(SYS && !q.get('sys')) q.set('sys', SYS);
++  let s = q.toString();
++  s += (s ? '&' : '') + 'at=' + String(GAT).slice(0, 16).replace('T', '_') + '&view=popup';
++  return location.origin + location.pathname + '?' + s;
++}
++function gUrlAt(){
++  let a = (new URLSearchParams(location.search).get('at') || '').trim().replace(/[_ ]/, 'T');
++  if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(a)) a += ':00';    // 주소는 분까지 — 내부 at 은 초 :00 까지
++  return a;
++}
++function gHide(){
++  if(document.body.classList.contains('popup-only')) return;
++  $('#gmask').classList.add('hidden');
++  gSetUrl(null);
++}
++$('#gclose').onclick = gHide;
++$('#gmask').onclick = e => { if(e.target.id==='gmask') gHide(); };
++$('#glink').onclick = async () => {
++  const b = $('#glink'), url = gLink();
++  // ★localhost 로 연 화면이면 그 주소는 이 PC 에서만 열린다 — 다른 사이트에 그대로 주면 안 된다
++  if(/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)){
++    prompt('이 주소는 localhost 라 다른 PC·사이트에서는 열리지 않습니다.\n'
++         + 'localhost 자리에 이 서버 PC 의 IP(또는 이름)를 넣어 쓰세요.', url);
++    return;
++  }
++  try{ await navigator.clipboard.writeText(url); b.textContent = '복사됨'; }
++  catch(e){ prompt('이 주소를 복사하세요', url); }
++  setTimeout(() => { b.textContent = '주소 복사'; }, 1500);
++};
++/* 주소로 바로 연 팝업 — 목록(FEED/PFEED)이 늦게 와서 제목·HID·고정 칸을 행 없이 그렸다.
++   그 분 행이 오면 한 번 다시 채운다. */
++function gRefresh(){
++  const box = $('#gpin');
++  if(!GAT || $('#gmask').classList.contains('hidden')) return;
++  if(!(box && box.dataset.lite === '1' && box.dataset.at === GAT)) return;
++  const r = FEED.find(x=>x.at===GAT) || PFEED.find(x=>x.at===GAT);
++  if(!r) return;
++  $('#gtitle').textContent = `${r.datetime} · ${r.area} · ${Math.round(r.score)}점 ${r.emoji} ${r.level}`;
++  fillHid(r);
++  pinAt(GAT);
++}
+ document.addEventListener('keydown', e => {
+-  if(e.key==='Escape'){ $('#gmask').classList.add('hidden');
++  if(e.key==='Escape'){ if(!$('#gmask').classList.contains('hidden')) gHide();
+                         $('#wmask').classList.add('hidden'); }
+ });
+ $('#wclose').onclick = () => $('#wmask').classList.add('hidden');
+@@ -5994,6 +6177,19 @@
+   if(r.error) alert(r.error); else { POLL = r.poll_interval_s; pollStatus(); }
+ };
+ 
++/* ── 팝업만 보기 (?sys=M16HUB&at=2026-10-16_23:59&view=popup) ─────────────
++   ★다른 사이트에서 더블클릭 그래프 팝업을 띄우려고 (2026-10-16). 관제 화면은 숨기고
++     팝업만 화면 가득. 오프닝·3초 폴링(startLive)은 돌리지 않는다 — 그 한 분만 본다. */
++function popupOnly(code, at){
++  SYS = SYSTEMS.some(s => s.code === code) ? code : null;
++  document.body.classList.add('popup-only');
++  const gm = $('#gmask');
++  [...document.body.children].forEach(el => {
++    if(el.tagName !== 'SCRIPT' && !el.contains(gm)) el.style.display = 'none';
++  });
++  openGraph(at);
++}
++
+ /* 시작 — 오프닝에서 시스템을 고른 뒤에 수집이 돈다 (startLive) */
+ (function initDate(){
+   const d = new Date();
+@@ -6001,9 +6197,13 @@
+ })();
+ (function boot(){
+   const q = (new URLSearchParams(location.search).get('sys') || '').toUpperCase();
++  const qat = gUrlAt();
++  const qview = new URLSearchParams(location.search).get('view');
+   hideApply();                                     // 숨김 모드 먼저 — 탭·단추 글자
++  if(qview === 'popup' && qat){ popupOnly(q, qat); return; }   // 다른 사이트용 — 팝업만
+   const hit = sysShown().find(s => s.code === q && s.ready);
+-  if(hit){ renderOpen(); pickSystem(hit.code); }   // ?sys=M14 → 새로고침해도 바로 관제
++  if(hit){ renderOpen(); pickSystem(hit.code);     // ?sys=M14 → 새로고침해도 바로 관제
++           if(qat) openGraph(qat); }              // ?sys=M14&at=… → 그 그래프까지 바로
+   else openShow();                                 // ?sys=ALL(숨김 중)·없음 → 오프닝에서 고르기
+ })();
+ </script>
