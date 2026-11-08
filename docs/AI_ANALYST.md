@@ -103,3 +103,24 @@ LLM 에게는 아래 JSON 하나만 내도록 요구합니다.
 | `auto_analyze` | true | 침입 시 자동 분석 |
 | `auto_apply` · `auto_apply_min_conf` | false · 80 | AI 판단 자동 실행 |
 | `health_sec` | 5 | API 연결 확인 주기 |
+
+
+## v1.3 (2026-11-08) — 대화창 「AI 분석관에게 묻기」
+
+사건이 났을 때만 자동으로 판정하던 것에 더해, 사람이 직접 물어볼 수 있습니다.
+
+| 질문 예 | DDS 가 먼저 찾는 것 |
+|---|---|
+| "45.9.8.21 이 들어와서 뭐 했어?" | 그 IP 의 **침입 이야기** (로그인 → 계정 → 명령 → 파일 → 외부 접속 → 경보) |
+| "오늘 뭐 있었어?" · "최근 7일 빨간 경보" | 기간 요약(심각도별·규칙별·대상별) + HIGH 경보 목록 |
+| "sudoers 바뀐 적 있어?" · "powershell 이 뭐 했어?" | 질문 단어로 경보·이벤트 검색 |
+| "지금 사건 설명해 줘" | 실시간 감시 화면의 사건(사실·단계) |
+
+찾은 기록을 `<<<DATA-…>>>` 경계로 감싸 LLM 에 넘기고, LLM 은 **기록에 있는 것만** 시간순으로 답하고 해야 할 일 1~2개를 제안합니다. 실행은 사람이 버튼으로 합니다.
+API 가 없고 GGUF 도 없으면(또는 `chat_time_limit_sec` 25초 안에 답이 없으면) 같은 기록을 정리한 문장으로 답합니다 — 모델 없이도 대화창은 동작합니다.
+
+### GGUF 가 "CPU 빌드" 라고 나올 때
+DDS 는 `llama_backend_init()` 뒤 `llama_supports_gpu_offload()` 와 라이브러리 파일의 CUDA 흔적으로 GPU 빌드인지 확인합니다. 콘솔과 AI 분석관 화면에 **확인 결과 · DDS 가 쓰는 파이썬 경로 · llama-cpp 위치·버전**이 나옵니다.
+- CUDA 빌드를 **다른 파이썬**에 설치했으면 그 경로로 다시 설치: `"<표시된 python.exe>" -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124`
+- 확실히 GPU 빌드인데도 CPU 로 나오면 `llm_config.json` 에 `"require_gpu": false` → 확인을 건너뛰고 올립니다 (CPU 빌드에서 끄면 큰 모델이 PC 를 멈출 수 있음)
+- 대화창은 `chat_time_limit_sec`(기본 60초) 안에 답이 없으면 기록 정리로 답합니다. 27B 급은 30초 안팎 걸리므로 5초 자동 분석용 GGUF 1 에는 4B~8B 를 권합니다.

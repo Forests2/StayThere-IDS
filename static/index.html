@@ -90,6 +90,8 @@ h1{margin:6px 0 0;font-family:var(--display);font-weight:400;font-size:44px;line
 .num.med{background:var(--amberbg);color:var(--amber2)}
 .rule{font-family:var(--mono);font-size:13px;padding:3px 10px;border-radius:6px;background:var(--bg);color:var(--ink2)}
 .cat{font-size:12px;padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--muted);white-space:nowrap}
+.att{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--line2);color:var(--muted);text-decoration:none;white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace}
+.att:hover{border-color:var(--ink);color:var(--ink)}
 .cat b{color:var(--red2);font-weight:600;margin-left:4px}
 .chainbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 16px;margin-bottom:12px;border-radius:12px;background:var(--bg)}
 .chainbar .steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
@@ -212,6 +214,33 @@ td.nowrap{white-space:nowrap}
 .aiprog.wide{font-size:15px;padding:16px 20px}
 #llmDot{background:#E0A93A;color:var(--ink);font-size:11px}
 .gintro{padding:16px 20px;border-radius:14px;background:var(--bg);font-size:14px;line-height:1.6}
+/* v1.3 침입 이야기 · 대화창 */
+.story{margin-top:14px;border-left:3px solid var(--line2);padding-left:16px;display:flex;flex-direction:column;gap:0}
+.story .sl{display:flex;gap:12px;align-items:flex-start;padding:7px 0;font-size:14px;line-height:1.5;position:relative}
+.story .sl::before{content:'';position:absolute;left:-22px;top:14px;width:9px;height:9px;border-radius:50%;background:var(--line2)}
+.story .sl.HIGH::before{background:var(--red)} .story .sl.MEDIUM::before{background:var(--amber)}
+.story .sl .t{font-family:var(--mono);font-size:12px;color:var(--cap);width:84px;flex:none;padding-top:2px}
+.story .sl.gap{color:var(--cap);font-size:12px}
+.stx{border:1px solid var(--line);border-radius:14px;padding:12px 16px;margin-top:10px;background:var(--white)}
+.stx.hot{border-color:var(--redline);background:var(--redbg)}
+.stx summary{display:flex;flex-wrap:wrap;align-items:center;gap:12px;cursor:pointer;list-style:none;font-size:14px}
+.stx summary::-webkit-details-marker{display:none}
+.stx summary::before{content:'▸';color:var(--cap);width:12px} .stx[open] summary::before{content:'▾'}
+.stx summary .ip{font-size:16px;font-weight:700} .stx summary .sum{flex:1 1 320px;line-height:1.5}
+.stx.hot summary .sum{color:var(--red2);font-weight:600}
+.stx .story{margin-top:12px;margin-left:12px}
+.ssum{padding:14px 18px;border-radius:12px;background:var(--bg);font-size:15px;line-height:1.6;font-weight:600}
+.ssum.hot{background:var(--redbg);color:var(--red2)}
+.chat{display:flex;flex-direction:column;gap:12px}
+.chat .msgs{display:flex;flex-direction:column;gap:10px;max-height:520px;overflow:auto}
+.chat .q,.chat .a{padding:12px 16px;border-radius:14px;font-size:14px;line-height:1.65;white-space:pre-wrap;word-break:break-word;max-width:92%}
+.chat .q{align-self:flex-end;background:var(--ink);color:var(--paper)}
+.chat .a{align-self:flex-start;background:var(--bg)}
+.chat .a .meta{display:block;margin-top:8px;font-size:12px;color:var(--cap);white-space:normal}
+.chat form{display:flex;gap:10px;flex-wrap:wrap}
+.chat input{flex:1 1 320px;min-height:46px;padding:0 16px;border-radius:10px;border:1px solid var(--line2);font-size:15px}
+.chat .ex{display:flex;gap:8px;flex-wrap:wrap}
+.chat .ex button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--line2);background:var(--white);font-size:13px;color:var(--muted)}
 [hidden]{display:none!important}
 @media (max-width:640px){main{padding:24px 16px}.hero{height:300px}.hero h1{font-size:40px}h1{font-size:36px}}
 </style>
@@ -337,6 +366,10 @@ td.nowrap{white-space:nowrap}
       </div>
     </div>
     <section class="card">
+      <div class="top"><h2>IP 별 침입 이야기</h2><span class="cap" id="storiesCap">어떤 IP 가 들어와서 무엇을 했나 — IP 마다 한 줄, 누르면 시간순 내용</span></div>
+      <div id="storiesBody"></div>
+    </section>
+    <section class="card">
       <div class="top"><h2>침입 사건</h2><span class="cap" id="incCount"></span></div>
       <div id="incGrid" class="incgrid"></div>
     </section>
@@ -398,6 +431,7 @@ td.nowrap{white-space:nowrap}
       </form>
       <span class="cap" style="margin-top:8px">ARTEX 공격 IP 여부 · 지금 연결 · 탐지 기록 · 로그인 시도 · 차단 여부를 한 번에 확인해요. CMD 에서는 <span class="mono">check_ip.bat</span></span>
       <div id="checkOut"></div>
+      <div id="storyOut"></div>
     </section>
     <section class="stats" id="ipStats"></section>
     <section class="card">
@@ -445,6 +479,19 @@ td.nowrap{white-space:nowrap}
       <span class="cap">순서: API → GGUF 1 → GGUF 2 · 안 되면 다음으로 자동 전환</span>
     </div>
     <div id="llmProg" class="aiprog wide" role="status" aria-live="polite" hidden></div>
+    <section class="card chat" aria-label="AI 분석관에게 묻기">
+      <div class="top"><h2>AI 분석관에게 묻기</h2><span class="cap">DDS 기록(dds.db)을 찾아서 답해요 · 기록에 없는 건 "없어요" 라고 해요 · 차단·종료는 하지 않아요</span></div>
+      <div class="ex">
+        <button type="button" data-ask="오늘 뭐 있었어?">오늘 뭐 있었어?</button>
+        <button type="button" data-ask="최근 7일 빨간 경보 정리해 줘">최근 7일 빨간 경보</button>
+        <button type="button" data-ask="지금 사건 설명해 줘">지금 사건 설명</button>
+        <button type="button" data-ask="sudoers 나 authorized_keys 바뀐 적 있어?">중요 파일 바뀐 적 있어?</button>
+        <button type="button" data-ask="외부 IP 가 들어와서 뭐 했어?">외부 IP 가 뭐 했어?</button>
+      </div>
+      <div id="chatMsgs" class="msgs"></div>
+      <form id="chatForm"><input id="chatIn" placeholder="예: 45.9.8.21 이 들어와서 뭐 했어?  ·  어제 로그인 실패 많았어?" autocomplete="off" maxlength="500"><button class="btn dark" type="submit" id="chatBtn">물어보기</button></form>
+      <span class="cap">AI(API·GGUF)가 없거나 답이 늦으면 기록을 정리한 문장으로 답해요. IP 를 적으면 그 IP 의 「침입 이야기」로 답해요.</span>
+    </section>
     <section class="stats" id="llmStats"></section>
 
     <section class="card">
@@ -512,6 +559,7 @@ async function post(path, body) {
   return r.json();
 }
 async function getJ(path) { return (await fetch(path, {cache:'no-store'})).json(); }
+const attChip = (a) => a && a.id ? `<a class="att" href="${esc(a.url)}" target="_blank" rel="noopener" title="MITRE ATT&CK · ${esc(a.tactic)} · ${esc(a.name)}">${esc(a.id)}</a>` : '';
 const catChip = (c) => `<span class="cat" title="${esc(c.cic ? 'CICIoT2023: ' + c.cic : 'AIPFL 데이터셋에 없는 DDS 고유 분류')}">${esc(c.ko)}${c.nf ? ` <b>${esc(c.nf)}</b>` : ''}</span>`;
 const empty = (msg, cols) => cols ? `<tr><td colspan="${cols}" class="empty">${esc(msg)}</td></tr>` : `<div class="empty">${esc(msg)}</div>`;
 
@@ -566,11 +614,14 @@ function render(s) {
   } else {
     $('tag').textContent = inc.tag; $('title').textContent = inc.title; $('sub').textContent = inc.sub;
     $('ctag').textContent = inc.tag; $('ctitle').textContent = inc.title; $('csub').textContent = inc.sub;
-    $('facts').innerHTML = inc.facts.map(f =>
-      `<div class="fact"><span class="l">${esc(f.label)}</span><span class="m">${esc(f.main)}</span><span class="s">${esc(f.sub)}</span></div>`).join('');
+    $('facts').innerHTML = inc.facts.map(f => {
+      const ip = (f.main || '').match(/^(\d{1,3}\.){3}\d{1,3}/);
+      return `<div class="fact"><span class="l">${esc(f.label)}</span><span class="m">${esc(f.main)}</span><span class="s">${esc(f.sub)}</span>
+        ${ip ? `<button class="mini" data-story="${esc(ip[0])}" style="align-self:flex-start;margin-top:4px">침입 이야기 — 이 IP 가 한 일</button>` : ''}</div>`;
+    }).join('');
     $('steps').innerHTML = inc.steps.map((t, i) =>
       `<div class="line"><span class="ts">${esc(t.ts)}</span><span class="num ${t.sev==='HIGH'?'':'med'}">${i+1}</span>
-       <span class="rule">${esc(t.rule)}</span><span style="flex:1 1 240px">${esc(t.text)}</span>${catChip(t.cat)}</div>`).join('');
+       <span class="rule">${esc(t.rule)}</span><span style="flex:1 1 240px">${esc(t.text)}</span>${attChip(t.attack)}${catChip(t.cat)}</div>`).join('');
     const j = inc.judge;
     if (j) {
       $('jVerdict').textContent = j.verdict; $('jVerdict').className = 'jverdict ' + j.level;
@@ -594,7 +645,21 @@ async function tick() {
 }
 
 // ================= 침입 기록 =================
+async function loadStories() {
+  const d = await getJ(`/api/stories?days=${H.days}&sim=${H.sim ? 1 : 0}`);
+  $('storiesCap').textContent = d.ips.length ? `${d.total}개 IP 중 ${d.ips.length}개 · 침입한 IP 가 먼저 · 기록에 있는 것만` : '어떤 IP 가 들어와서 무엇을 했나 — IP 마다 한 줄, 누르면 시간순 내용';
+  $('storiesBody').innerHTML = d.ips.length ? d.ips.map((st, i) => `
+    <details class="stx ${st.intrusion ? 'hot' : ''}" ${i === 0 && st.intrusion ? 'open' : ''}>
+      <summary><span class="mono ip">${esc(st.ip)}</span><span class="sum">${esc(st.summary)}</span>${st.sim_only ? SIMTAG : ''}
+        <span class="cap nowrap">${esc((st.last || '').slice(5, 16))}</span></summary>
+      ${st.attacks && st.attacks.length ? `<div class="row" style="margin:8px 0 0 0;gap:6px">${st.attacks.map(a => `${attChip(a)}<span class="cap" style="margin-right:8px">${esc(a.tactic)}</span>`).join('')}</div>` : ''}
+      <div class="story">${st.lines.map(l => `<div class="sl ${esc(l.sev)} ${l.kind === 'gap' ? 'gap' : ''}"><span class="t">${esc(l.t || '')}</span><span>${esc(l.text)}${l.sim ? ' ' + SIMTAG : ''}</span></div>`).join('')}</div>
+      <div class="row" style="margin-top:10px"><button class="mini" data-check="${esc(st.ip)}" data-goips="1">IP 조사</button><button class="mini" data-askip="${esc(st.ip)}">AI 분석관에게 묻기</button>
+        <button class="mini red" data-block="${esc(st.ip)}">차단</button></div>
+    </details>`).join('') : empty('이 기간에 들어온 외부 IP 기록이 없어요');
+}
 async function loadHistory() {
+  loadStories().catch(() => {});
   HIST = await getJ(`/api/history?days=${H.days}&sim=${H.sim ? 1 : 0}`);
   const incs = HIST.incidents.filter(i => {
     if (!i.ts) return true;
@@ -623,7 +688,7 @@ function renderAlertRows() {
   const rows = HIST.alerts.filter(a => H.sev === 'ALL' || a.sev === H.sev);
   $('alertRows').innerHTML = rows.length ? rows.map(a =>
     `<tr><td class="mono nowrap">${esc(a.ts.slice(5,19))}</td><td><span class="sev ${esc(a.sev)}">${esc(a.sev)}</span></td>
-     <td class="mono">${esc(a.rule)}</td><td>${esc(a.text)} ${a.sim ? SIMTAG : ''}</td><td>${catChip(a.cat)}</td></tr>`).join('')
+     <td class="mono">${esc(a.rule)}</td><td>${esc(a.text)} ${a.sim ? SIMTAG : ''}</td><td>${attChip(a.attack)} ${catChip(a.cat)}</td></tr>`).join('')
     : empty('해당하는 알림이 없어요', 5);
 }
 
@@ -693,9 +758,20 @@ async function loadIPs() {
   }).join('') : empty('목록이 비어 있어요', 6);
 }
 
+async function loadStory(ip) {
+  const el = $('storyOut'); if (!el) return;
+  el.innerHTML = '<div class="empty">이 IP 가 한 일을 엮는 중…</div>';
+  const st = await getJ('/api/story?ip=' + encodeURIComponent(ip) + '&hours=72');
+  el.innerHTML = `<h3 class="h3">이 IP 가 들어와서 한 일 <span class="cap">최근 72시간 · 기록에 있는 것만</span></h3>
+    <div class="ssum ${st.intrusion ? 'hot' : ''}">${esc(st.summary)}</div>
+    ${st.attacks && st.attacks.length ? `<div class="row" style="margin-top:10px;gap:6px">${st.attacks.map(a => `${attChip(a)}<span class="cap" style="margin-right:8px">${esc(a.tactic)}</span>`).join('')}</div>` : ''}
+    ${st.lines.length ? `<div class="story">${st.lines.map(l => `<div class="sl ${esc(l.sev)} ${l.kind === 'gap' ? 'gap' : ''}"><span class="t">${esc(l.t || '')}</span><span>${esc(l.text)}${l.sim ? ' ' + SIMTAG : ''}</span></div>`).join('')}</div>` : ''}
+    <div class="row" style="margin-top:14px"><button class="btn" data-askip="${esc(ip)}">AI 분석관에게 이 IP 물어보기</button></div>`;
+}
 async function checkIP(ip) {
   $('checkIp').value = ip;
   $('checkOut').innerHTML = '<div class="empty">조사 중…</div>';
+  loadStory(ip).catch(() => {});
   const r = await getJ('/api/ipcheck?ip=' + encodeURIComponent(ip));
   if (!r.ok) { $('checkOut').innerHTML = `<div class="warnbar" style="margin-top:12px">${esc(r.msg)}</div>`; return; }
   const LV = {high:['bad','위험'], med:['warn','주의'], low:['','정상'], none:['','기록 없음']}[r.level];
@@ -737,9 +813,10 @@ async function loadRules() {
   $('rulesBody').innerHTML = groups.map(g => {
     const rs = d.rules.filter(r => r.group === g);
     return `<section class="card"><div class="top"><h2>${esc(g)}</h2><span class="cap">규칙 ${rs.length}개 · 발동 횟수는 시뮬레이션 제외</span></div>
-      <div class="tbl"><table><thead><tr><th>규칙</th><th>언제 발동하나</th><th>심각도</th><th>공격 분류</th><th>오늘</th><th>7일</th><th>마지막</th></tr></thead><tbody>
+      <div class="tbl"><table><thead><tr><th>규칙</th><th>언제 발동하나</th><th>심각도</th><th>ATT&amp;CK</th><th>공격 분류</th><th>오늘</th><th>7일</th><th>마지막</th></tr></thead><tbody>
       ${rs.map(r => `<tr><td class="mono">${esc(r.rule)}</td><td>${esc(r.desc)}</td>
-        <td>${r.sev.split('/').map(s => `<span class="sev ${esc(s)}">${esc(s)}</span>`).join(' ')}</td><td>${catChip(r.cat)}</td>
+        <td>${r.sev.split('/').map(s => `<span class="sev ${esc(s)}">${esc(s)}</span>`).join(' ')}</td>
+        <td class="nowrap">${r.attack ? `${attChip(r.attack)}<div class="cap" style="font-size:11px;margin-top:3px">${esc(r.attack.tactic)}</div>` : '<span class="cap">-</span>'}</td><td>${catChip(r.cat)}</td>
         <td class="mono">${r.today || '<span class="cap">0</span>'}</td>
         <td class="mono nowrap">${r.real7}${r.sim7 ? ` <span class="cap">(+시뮬 ${r.sim7})</span>` : ''}</td>
         <td class="mono nowrap">${esc((r.last || '').slice(5,16)) || '<span class="cap">-</span>'}</td></tr>`).join('')}
@@ -889,7 +966,10 @@ async function loadLLM(full = true) {
     ['GGUF 폴더 파일', st.ggufFiles.length + '개', false],
     ['llama-cpp', st.llamaCpp ? '설치됨' : '없음', !st.llamaCpp && st.ggufFiles.length && 'warn'],
     ['GPU (VRAM 24GB 이상 필요)', !st.llamaCpp ? '-' : st.gpu ? '사용 가능' : 'CPU 빌드 → GGUF 안 됨', st.llamaCpp && !st.gpu && 'warn']
-  ].map(([l, v, w]) => `<div class="stat ${w ? 'warn' : ''}"><span class="cap">${esc(l)}</span><b style="font-size:26px">${esc(v)}</b></div>`).join('');
+  ].map(([l, v, w]) => `<div class="stat ${w ? 'warn' : ''}"><span class="cap">${esc(l)}</span><b style="font-size:26px">${esc(v)}</b></div>`).join('')
+  + (st.llamaCpp && !st.gpu ? `<div class="warnbar" style="grid-column:1/-1">GPU 확인 결과: ${esc(st.gpuHow || '')}<br>DDS 가 쓰는 파이썬: <span class="mono">${esc((st.gpuWhere || {}).python || '')}</span> · llama-cpp 위치: <span class="mono">${esc((st.gpuWhere || {}).where || '')}</span> (버전 ${esc(st.llamaCppVersion || '')})<br>
+      CUDA 빌드를 <b>다른 파이썬</b>에 설치했으면 위 파이썬으로 다시 설치하세요: <span class="mono">"${esc((st.gpuWhere || {}).python || 'python')}" -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124</span><br>
+      확실히 GPU 빌드인데 이렇게 나오면 llm_config.json 에 <span class="mono">"require_gpu": false</span> 를 넣고 다시 켜세요.</div>` : '');
   if (full) {
     $('llmAutoAnalyze').checked = !!c.auto_analyze; $('llmAutoApply').checked = !!c.auto_apply; $('llmMinConf').value = c.auto_apply_min_conf;
     $('apiFormat').value = c.api.format; $('apiUrl').value = c.api.url; $('apiKey').value = c.api.key; $('apiModel').value = c.api.model;
@@ -988,6 +1068,27 @@ async function emergency(on) {
   const r = await post('/api/emergency', {on}); toast(r.msg, !r.ok); tick();
 }
 
+// ================= v1.3 AI 분석관 대화 =================
+const CHAT = [];
+async function askAnalyst(q) {
+  q = (q || '').trim(); if (!q) return;
+  const box = $('chatMsgs'), btn = $('chatBtn');
+  box.insertAdjacentHTML('beforeend', `<div class="q">${esc(q)}</div><div class="a" id="chatWait">기록을 찾는 중…</div>`);
+  box.scrollTop = box.scrollHeight; btn.disabled = true; $('chatIn').value = '';
+  try {
+    const r = await post('/api/ask', {question: q, history: CHAT.slice(-4)});
+    const w = $('chatWait'); if (!w) return;
+    if (!r.ok) { w.textContent = r.msg || '실패'; w.id = ''; return; }
+    const meta = r.source === 'llm' ? `AI ${esc(BK_KO[r.backend] || r.backend)}${r.model ? ' · ' + esc(r.model) : ''} · ${r.seconds}초 · 기간 ${esc(r.period)}`
+                                    : `기록 정리로 답함 (${esc(r.llm_error || 'AI 연결 없음')}) · ${r.seconds}초 · 기간 ${esc(r.period)}`;
+    w.innerHTML = `${esc(r.answer)}<span class="meta">${meta}${r.evidence && r.evidence.length ? ` · 근거 ${r.evidence.length}줄` : ''}${r.ips && r.ips.length ? ` · <a href="#ips" data-check="${esc(r.ips[0])}">${esc(r.ips[0])} 조사 화면</a>` : ''}</span>`;
+    w.id = '';
+    CHAT.push({q, a: r.answer});
+  } catch (e) { const w = $('chatWait'); if (w) { w.textContent = '실패: ' + e.message; w.id = ''; } }
+  finally { btn.disabled = false; box.scrollTop = box.scrollHeight; }
+}
+$('chatForm').addEventListener('submit', (e) => { e.preventDefault(); askAnalyst($('chatIn').value); });
+
 // ================= 화면 전환 =================
 const LOADERS = {history: loadHistory, ai: loadAI, ips: loadIPs, rules: loadRules, guide: async () => renderGuide(), llm: () => loadLLM(true)};
 function route() {
@@ -1049,7 +1150,13 @@ document.addEventListener('click', async (ev) => {
   const del = t.closest('[data-iocdel]');
   if (del) { const r = await post('/api/ioc', {ip: del.dataset.iocdel, op: 'remove'}); toast(r.msg, !r.ok); loadIPs(); }
   const ck = t.closest('[data-check]');
-  if (ck) { checkIP(ck.dataset.check); window.scrollTo({top: 0, behavior: 'smooth'}); }
+  if (ck) { if (ck.dataset.goips) { location.hash = '#ips'; setTimeout(() => checkIP(ck.dataset.check), 150); } else { checkIP(ck.dataset.check); window.scrollTo({top: 0, behavior: 'smooth'}); } }
+  const sty = t.closest('[data-story]');
+  if (sty) { location.hash = '#ips'; setTimeout(() => checkIP(sty.dataset.story), 150); }
+  const akip = t.closest('[data-askip]');
+  if (akip) { location.hash = '#llm'; setTimeout(() => askAnalyst(`${akip.dataset.askip} 이 들어와서 뭐 했어?`), 200); }
+  const ak = t.closest('[data-ask]');
+  if (ak) askAnalyst(ak.dataset.ask);
   const ia = t.closest('[data-iocadd]');
   if (ia) { const r = await post('/api/ioc', {ip: ia.dataset.iocadd, op: 'add'}); toast(r.msg, !r.ok); loadIPs(); checkIP(ia.dataset.iocadd); }
   const g = t.closest('[data-guide]');

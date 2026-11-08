@@ -1,5 +1,45 @@
 # 변경 기록
 
+## 2026-11-08 — v1.3 · 침입 이야기 · AI 분석관 대화창 · MITRE ATT&CK
+
+### 침입 이야기 (`story.py`, `GET /api/story?ip=&hours=`)
+"어떤 IP 가 들어와서 내 PC 에서 무엇을 했다" 를 시간순 문장으로 엮음. 기록(dds.db)에 있는 것만 쓰고 추측하지 않음.
+1. 그 IP 의 로그인 실패(묶어서 1줄) · 로그인 성공(계정 · 방식)
+2. 로그인한 계정이 2시간 안에 실행한 명령 (process 이벤트의 username, Linux 는 sshd 아래 프로세스 포함) — 다른 계정(root 의 cron 등)은 안 섞임
+3. 같은 시간대의 중요 파일 · 자동 실행 · 웹 폴더 변경 (추가된 줄 표시)
+4. 그 명령 · 그 계정이 외부로 나간 연결
+5. 이 IP 에 대한 경보 (ATT&CK ID 포함)
+요약 한 줄("… 사이에 로그인 실패 7회, deploy 계정으로 로그인, 명령 5개 실행, 파일 1개 변경, 외부 접속 1곳 — 들어와서 명령까지 실행했어요") + 시간순 목록.
+화면: 위협 IP 목록 「조사」 아래, 실시간 감시 「누가」 카드의 「침입 이야기」 버튼.
+
+### AI 분석관 대화창 (`analyst.py`, `POST /api/ask`)
+- 질문에서 IP · PID · 규칙 이름 · 프로그램 이름 · 파일 경로 · 기간(오늘 · 어제 · N시간 · N일 · 7일) 을 뽑음
+- IP 가 있으면 침입 이야기, 없으면 기간 요약(심각도별 · 규칙별 · HIGH 대상별) + HIGH 경보 + 질문 단어로 검색한 경보·이벤트 + 지금 화면의 사건
+- 이것을 `<<<DATA>>>` 경계로 감싸 LLM 에 넘김 (API → GGUF, 기존 `llm.chat`, 대화는 `chat_time_limit_sec` 기본 25초). 지시문: 기록에 있는 것만, 시간순, 해야 할 일 1~2개, 12줄 안
+- **LLM 이 없거나 시간 안에 답이 없으면 기록을 정리한 문장으로 답함** (모델 없이도 동작). 답 아래에 어느 쪽이 답했는지 · 기간 · 근거 줄 수 표시
+- 최근 4번의 문답을 이어서 보냄. 차단·종료는 하지 않음 (버튼은 사람이)
+- 예시 버튼: 오늘 뭐 있었어? · 최근 7일 빨간 경보 · 지금 사건 설명 · 중요 파일 바뀐 적 있어? · 외부 IP 가 뭐 했어?
+
+### MITRE ATT&CK 연결 (`attack_taxonomy.ATTACK`, `attack_of(rule, detail)`)
+- 규칙 53개 → (전술, 기법 ID, 기법 이름). 기록용 규칙(ai_web_usage 등 6개)은 비움
+- `critical_file_change` 는 바뀐 파일로 구분: ld.so.preload T1574.006 · authorized_keys T1098.004 · sudoers T1548.003 · pam.d T1556.003 · sshd_config T1021.004 · passwd T1136.001 · shadow T1003.008 · hosts T1565.001 · 예약 작업 T1053.005
+- 규칙 리포트(ATT&CK 열) · 침입 기록 · 공격 흐름 단계 · 침입 이야기에 ID 칩, 누르면 attack.mitre.org. `docs/DETECTION_RULES.md` 에도 열 추가
+
+### IP 별 침입 이야기 (`story.all_ips`, `GET /api/stories?days=&sim=`)
+- 「침입 기록」 화면 맨 위에 최근 기간 동안 들어온(또는 들어오려 한) 외부 IP 를 **IP 마다 한 줄 요약**으로 나열, 누르면 시간순 내용. 침입한 IP 가 먼저. 각 줄에 「IP 조사」·「AI 분석관에게 묻기」·「차단」 버튼
+
+### 오탐 수정 (같은 날 실제 PC 에서 발견)
+- `critical_file_change`: Windows 자체 예약 작업(`Tasks\Microsoft\Windows\…`)이 다음 실행 시각을 갱신하는 것을 HIGH 로 잡아 「외부에서 침입했어요」 사건을 만들었음 → OS 작업의 **변경**은 기록만, **새 작업**이거나 내용에 powershell·wscript·Temp·`-enc`·http 등이 있을 때만 경보. 침입 이야기에서도 제외
+- DDS 자신이 알림·차단용으로 띄운 powershell·netsh 를 `devserver_spawned_shell` 로 잡던 것 → 자기 프로세스 트리는 탐지 제외 (`dds_self`)
+- AI 분석관 대화: 모델이 한국어 답 대신 데이터를 영어로 옮겨 적는 경우 → 한국어 전용·베끼기 금지 지시 강화, 영어·JSON 답은 버리고 기록 정리로 답함(`looks_like_dump`), GGUF 에는 요약만 넘김, `chat_time_limit_sec` 기본 60초
+- GGUF GPU 빌드 확인: 최신 llama.cpp 는 백엔드를 나중에 불러와서 `llama_supports_gpu_offload()` 가 False 로 나올 수 있음 → `llama_backend_init()` 뒤 확인 + 라이브러리 파일의 CUDA 흔적 검사, 화면에 확인 결과·DDS 가 쓰는 파이썬 경로 표시, `llm_config.json` `"require_gpu": false` 로 확인 건너뛰기 가능
+
+### 저장소 (`storage.py`)
+- `events_between(lo, hi, kinds)` · `search(text, since)` · `summary(since)` 추가
+
+### 테스트
+- `test_story()`: ATT&CK 53개 전부 연결, sudoers → T1548.003, 침입 이야기(계정 추적 · 다른 계정 제외 · 기록 없는 IP 는 빈 결과), 대화 3종(모델 없음). 모의 OpenAI 호환 서버로 LLM 경로도 확인
+
 ## 2026-10-22 — v1.2 (탐지 규칙 50 → 53개) · 경보 묶기 · 기록 보관
 
 ### 추가한 탐지 규칙 (3개)

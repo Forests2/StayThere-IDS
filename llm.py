@@ -21,6 +21,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import urllib.error
@@ -37,12 +38,14 @@ DEFAULT_CFG = {
     "max_tokens": 400,
     "gguf_max_tokens": 256,
     "time_limit_sec": 5,         # 분석 전체 5초 안: API 5초, GGUF 생성 5초에서 끊음
+    "chat_time_limit_sec": 60,   # v1.3 대화창(AI 분석관에게 묻기)은 더 기다림 (27B 급 GGUF 는 30초 넘게 걸림) — 넘으면 기록 정리로 답함
     "temperature": 0.1,
     "gguf_dir": "gguf",          # 이 폴더에 .gguf 를 넣으면 자동 인식 (슬롯 경로가 비어 있을 때 자동 배정)
     "auto_analyze": True,        # 침입이 잡히면 AI 분석관이 자동으로 분석
     "auto_apply": False,         # AI 판단(확신 80+)을 사람 승인 없이 바로 실행 — 기본 꺼짐
     "auto_apply_min_conf": 80,
     "health_sec": 5,             # API 연결 확인 주기 (끊기면 바로 GGUF)
+    "require_gpu": True,         # GGUF 는 GPU 빌드일 때만 로드. GPU 빌드인데 확인이 틀리면 false 로 (CPU 빌드에서 false 로 하면 PC 가 멈출 수 있음)
 }
 
 SYSTEM_PROMPT = """너는 Windows PC 보안 관제 분석관이다. DDS(침입 탐지 프로그램)가 잡은 사건 기록을 보고 판단한다.
@@ -221,18 +224,69 @@ def call_api(a, messages, max_tokens, temperature):
 
 # ================= GPU 확인 =================
 _GPU = None
+_GPU_WHERE = {}
 
 
 def gpu_info():
-    """llama-cpp-python 이 GPU(CUDA/Vulkan/Metal) 빌드인지 확인"""
+    """llama-cpp-python 이 GPU(CUDA/Vulkan/Metal) 빌드인지 확인
+    - llama_supports_gpu_offload() 가 최상위 또는 llama_cpp.llama_cpp 에 있음 (버전마다 다름)
+    - 못 찾으면 설치된 공유 라이브러리 이름·내용으로 CUDA/Vulkan/Metal 흔적 확인
+    - llm_config.json "require_gpu": false 면 확인을 건너뜀 (이미 GPU 로 쓰고 있는 걸 아는 경우)"""
     global _GPU
     if _GPU is None:
         try:
             import llama_cpp
-            f = getattr(llama_cpp, "llama_supports_gpu_offload", None)
-            _GPU = {"llama": True, "gpu": bool(f()) if f else False}
         except Exception:
-            _GPU = {"llama": False, "gpu": False}
+            _GPU = {"llama": False, "gpu": False, "how": "llama-cpp-python 없음"}
+            return _GPU
+        gpu, how = None, ""
+        try:                                 # 최신 llama.cpp 는 백엔드를 나중에 불러옴 → 먼저 초기화해야 GPU 가 보임
+            llama_cpp.llama_backend_init()
+        except Exception:
+            pass
+        for modname in ("llama_cpp", "llama_cpp.llama_cpp"):
+            try:
+                mod = __import__(modname, fromlist=["x"])
+                f = getattr(mod, "llama_supports_gpu_offload", None)
+                if f:
+                    gpu = bool(f())
+                    how = f"{modname}.llama_supports_gpu_offload() = {gpu}"
+                    break
+            except Exception as e:
+                how = f"{modname}: {e}"
+        if gpu is not True:                  # 함수가 없거나 False 라고 해도 → 라이브러리 파일에서 CUDA 흔적을 한 번 더 찾기
+            try:
+                import glob
+                base = os.path.dirname(llama_cpp.__file__)
+                libs = glob.glob(os.path.join(base, "lib", "*")) + glob.glob(os.path.join(base, "*.dll")) + glob.glob(os.path.join(base, "*.so*"))
+                names = " ".join(os.path.basename(x).lower() for x in libs)
+                gpu = any(k in names for k in ("cuda", "cublas", "vulkan", "metal", "hip"))
+                if not gpu:
+                    for x in libs[:12]:
+                        try:
+                            with open(x, "rb") as fh:
+                                blob = fh.read(60_000_000)
+                            if b"ggml_backend_cuda" in blob or b"ggml_cuda" in blob or b"ggml_vulkan" in blob or b"ggml_metal" in blob:
+                                gpu = True
+                                break
+                        except OSError:
+                            pass
+                how = (how + " · " if how else "") + f"라이브러리 검사 ({len(libs)}개, cuda/cublas 흔적) = {gpu}"
+            except Exception as e:
+                gpu, how = False, f"검사 실패: {e}"
+        try:
+            if load_cfg().get("require_gpu", True) is False:
+                gpu, how = True, "require_gpu=false (확인 건너뜀)"
+        except Exception:
+            pass
+        _GPU = {"llama": True, "gpu": bool(gpu), "how": how}
+        try:
+            ver = getattr(llama_cpp, "__version__", "?")
+            where = os.path.dirname(llama_cpp.__file__)
+        except Exception:
+            ver, where = "?", "?"
+        print(f"[AI 분석관] llama-cpp GPU 확인: {how} · 버전 {ver} · 위치 {where} · 파이썬 {sys.executable}")
+        _GPU_WHERE.update({"version": ver, "where": where, "python": sys.executable})
     return _GPU
 
 
@@ -314,8 +368,9 @@ class GGUFSlot:
         except ImportError:
             raise RuntimeError("llama-cpp-python 이 설치돼 있지 않아요 → GPU(CUDA) 빌드로 설치하세요 (docs/AI_ANALYST.md)")
         if not gpu_info()["gpu"]:
-            raise RuntimeError("GGUF 는 GPU 전용이에요 (NVIDIA GPU · VRAM 24GB 이상). 지금 llama-cpp-python 이 CPU 빌드라 "
-                               "실행하지 않아요 → CUDA 빌드로 다시 설치하세요. 탐지·차단은 GPU 없이 정상 동작해요.")
+            raise RuntimeError("GGUF 는 GPU 전용이에요 (NVIDIA GPU · VRAM 24GB 이상). llama-cpp-python 이 CPU 빌드로 보여서 "
+                               f"실행하지 않아요 ({gpu_info().get('how', '')}). CUDA 빌드로 다시 설치하거나, 확실히 GPU 빌드면 "
+                               "llm_config.json 에 \"require_gpu\": false 를 넣으세요. 탐지·차단은 GPU 없이 정상 동작해요.")
         with self.lock:
             if self.llm is not None and self.path == path:
                 return "이미 로드돼 있어요"
@@ -602,7 +657,8 @@ def status():
     except Exception:
         has_llama, ver = False, ""
     return {"cfg": public_cfg(cfg), "slots": {k: s.status() for k, s in SLOTS.items()},
-            "llamaCpp": has_llama, "llamaCppVersion": ver, "gpu": gpu_info()["gpu"],
+            "llamaCpp": has_llama, "llamaCppVersion": ver, "gpu": gpu_info()["gpu"], "gpuHow": gpu_info().get("how", ""),
+            "gpuWhere": _GPU_WHERE,
             "ggufDir": gguf_dir(cfg), "ggufFiles": scan_gguf(cfg), "resolved": resolve_paths(cfg),
             "api": MANAGER.api_state if MANAGER else None,
             "lastAnalysis": MANAGER.last if MANAGER else None,

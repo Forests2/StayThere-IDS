@@ -17,6 +17,14 @@
 
 ## 📌 업데이트 내역
 
+### 2026-11-08 — v1.3 · 침입 이야기 · AI 분석관 대화창 · MITRE ATT&CK 연결
+- **침입 이야기** — 「어떤 IP 가 들어와서 내 PC 에서 무엇을 했나」를 시간순 한국어 문장으로. 로그인 실패 → 어떤 계정으로 로그인 → 그 계정이 실행한 명령 → 바뀐 파일 → 밖으로 나간 연결 → 경보. 위협 IP 목록에서 「조사」, 실시간 감시의 「누가」 카드에서 「침입 이야기」 버튼. 기록(dds.db)에 있는 것만 엮고 추측은 안 함 (`story.py`, `/api/story`)
+- **AI 분석관 대화창** — "오늘 뭐 있었어?", "45.9.8.21 이 들어와서 뭐 했어?", "sudoers 바뀐 적 있어?" 처럼 물으면 DDS 기록을 찾아 답함. IP 가 있으면 침입 이야기, 없으면 기간 요약 + 질문 단어로 검색한 경보·이벤트 + 지금 사건을 '데이터' 로 LLM(API → GGUF)에 넘김. **AI 가 없거나 늦으면 기록을 정리한 문장으로 답함** (모델 없이도 동작). 차단·종료는 하지 않음 (`analyst.py`, `/api/ask`)
+- **IP 별 침입 이야기** — 「침입 기록」 맨 위에 들어온 외부 IP 마다 한 줄 요약, 누르면 시간순 내용 (`/api/stories`)
+- **MITRE ATT&CK 연결** — 규칙 53개 전부에 기법 ID·전술을 붙임 (`attack_taxonomy.ATTACK`). 규칙 리포트 · 침입 기록 · 공격 흐름 · 침입 이야기에 `T1098.004` 같은 칩이 붙고 누르면 attack.mitre.org 로. `critical_file_change` 는 바뀐 파일에 따라 다른 기법
+- **오탐 수정** — Windows 자체 예약 작업 갱신을 침입으로 잡던 것, DDS 자신이 띄운 powershell 을 잡던 것. GGUF GPU 빌드 확인 개선(`require_gpu`)
+- **테스트** — 침입 이야기(계정 추적 · root 의 cron 은 안 섞임) · 대화(모델 없음) · ATT&CK 53개 연결 확인
+
 ### 2026-10-22 — v1.2 · 중요 파일 변조 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 기록 보관 (탐지 규칙 50 → 53개)
 - **중요 파일 변조 감시** (`critical_file_change`) — `/etc/passwd`·`shadow`·`sudoers`·`ld.so.preload`·`authorized_keys`·`sshd_config`·`pam.d`, Windows `hosts`·예약 작업 폴더를 30초마다 비교해 추가·삭제된 줄과 권한 변경을 경보
 - **브라우저 탈취** (`browser_hijack`) — cmd·powershell·wscript·Temp 의 프로그램이 브라우저를 원격 조종 옵션으로 띄우거나, 디버깅 포트를 외부에 열거나(`--remote-debugging-address`), Temp 의 확장 프로그램을 강제 로드. 내 AI 도구(Playwright 등) 아래는 제외. Chrome 원격 디버깅(9222)·Node inspector(9229)·ChromeDriver(9515) 포트를 AI 개발 도구 포트 목록에 추가
@@ -61,6 +69,7 @@ It was built after the **ARTEX** campaign (Sep–Oct 2026), where an LLM-driven 
 - **53 detection rules** — port scans, ARTEX IOCs (IPs, port 18899, `xcai.pro`), web shells, recon bursts, brute force, external RDP logons, account creation / admin-group changes, suspicious IPs, threat-feed CIDRs
 - **ARTEX (original & Korean fork `artex-ko`)** — host artifacts (`artex`, `artex_token`, `autumn27/artex`), recon User-Agents in web-server logs (`artex-enrich/1.0`, `spa-api-recon`)
 - **AI-agent behavior** — machine-parsable command style (`echo ---`, `head`, `2>nul`), fail-fix-retry loops, credential dumping (SAM/LSASS), Potato-style privilege escalation, payload staging (certutil decode, chunk joining, execution from Public/Temp), IP rotation, exposed AI dev tools (Jupyter/Ollama)
+- **v1.3 (2026-11-08)** — **intrusion story** ("IP X logged in as Y, ran these commands, changed these files, connected out to Z" as a timeline built only from recorded events), **analyst chat** (ask in natural language; records are gathered first and handed to the LLM as data — falls back to a plain summary of the records when no model is available), and **MITRE ATT&CK technique IDs** on all 53 rules (rules report, history, attack chain; `critical_file_change` maps per file)
 - **v1.2 (2026-10-22)** — critical-file tampering (`passwd`/`sudoers`/`ld.so.preload`/`authorized_keys`/`hosts`/scheduled-task folder, line-level diff), browser hijacking (shell- or script-launched browsers with remote-debugging flags, CDP port exposed to the network, side-loaded extensions from Temp), C2 beaconing (regular-interval new connections to the same host), alert grouping (×N instead of dozens of rows), dated log files with 30-day retention for logs and the SQLite DB
 - **v1.1 (2026-10-21)** — web-shell file drops, customer-ID enumeration in web logs, log theft (the 2026 Korean bank attack patterns); LLM-querying malware (PROMPTSTEAL/PROMPTFLUX style: script hosts or Office calling LLM APIs, commands right after an LLM call, autorun changes, PowerShell 4104); GitSpawn-style git execution; AI-tool token/MCP-config theft; ransomware prep (shadow-copy deletion, mass `*.docx.xxx` files); malicious install scripts; syslog/webhook alert forwarding
 - **"Is this an AI attack program?"** — machine-speed evidence (median step gap, duration) + AI evidence (direct IOCs vs. behavioral traits), calibrated on public 2026 AI-agent intrusion cases
@@ -147,6 +156,7 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | **LLM 을 부르는 악성코드 (v1.1)** | 스크립트 호스트·Office 의 LLM API 접속, LLM 접속 직후 명령 실행, Run 키·시작프로그램 등록, PowerShell 스크립트 블록(4104) 검사 |
 | **랜섬웨어 · 공급망 · AI 코딩 도구 (v1.1)** | 백업·복구 수단 삭제, 문서 대량 암호화 흔적, npm·pip 설치 중 다운로드, git 설정을 통한 실행(GitSpawn), AI 도구 토큰·MCP 설정 탈취 |
 | **중요 파일 · 브라우저 · 비콘 (v1.2)** | passwd·sudoers·ld.so.preload·authorized_keys·hosts 변조(추가·삭제된 줄 표시), 셸·스크립트가 브라우저를 원격 조종 옵션으로 띄움, 같은 외부 서버로 일정 간격 반복 접속(C2 비콘) |
+| **침입 이야기 · 대화창 · ATT&CK (v1.3)** | IP 하나를 고르면 「들어와서 무엇을 했나」를 시간순 문장으로. AI 분석관에게 한국어로 물으면 기록을 찾아 답함(모델 없으면 기록 정리로). 규칙마다 MITRE ATT&CK 기법 ID |
 | **경보 묶기 · 기록 보관 (v1.2)** | 같은 경보 반복은 ×N 으로 한 줄, `logs/dds_날짜.log` 날짜별 기록, 30일 지난 로그·DB 기록 자동 삭제 |
 | **알림** | 외부 침입이면 Windows 알림 + 경고음 + 대시보드 자동 열림. AI 분석은 「API 실행 중… → 끝났어요」 진행 상황 표시. **syslog(Logpresso 등)·웹훅으로 PC 밖에도 전송 가능** (v1.1, 기본 꺼짐) |
 
@@ -181,6 +191,10 @@ CrowdStrike 는 2026년 9월 말~10월 초 한국 금융기관 공격에서 중�
 | 자리 잡기 테스트 (v1.2) — 중요 파일 변조 · 브라우저 탈취 · C2 비콘 |
 |---|
 | ![자리 잡기](docs/images/15_persist_alert.png) |
+
+| 침입 이야기 (v1.3) — 이 IP 가 들어와서 한 일 | AI 분석관 대화창 (v1.3) |
+|---|---|
+| ![침입 이야기](docs/images/16_story.png) | ![대화창](docs/images/17_analyst_chat.png) |
 
 | 조치 가이드 | 긴급 차단 중 |
 |---|---|
@@ -323,9 +337,11 @@ DDS/
 ├─ baseline.py           평소 패턴 학습 (처음 보는 행동 → 확인 필요)
 ├─ storage.py            SQLite 저장소 (경보 묶기 횟수 · 오래된 기록 정리)
 ├─ logfile.py            날짜별 로그 파일 logs/dds_날짜.log · 오래된 로그 삭제 (v1.2)
+├─ story.py              침입 이야기 — IP 가 들어와서 한 일을 시간순 문장으로 (v1.3)
+├─ analyst.py            AI 분석관 대화 — 질문 → 기록 검색 → LLM 답 (없으면 기록 정리) (v1.3)
 ├─ ip_check.py           외부 IP 조사 (CMD 겸용)
 ├─ emergency_release.py  긴급 차단 비상 해제
-├─ test_artex_sim.py     규칙 테스트 (시나리오 A~M: ARTEX · AI 에이전트 · 한국어판 · 웹 침투 · LLM 악성코드 · AI 코딩 도구 · 리눅스 · 자리 잡기 · 오탐 · 파서)
+├─ test_artex_sim.py     규칙 테스트 (시나리오 A~M + 침입 이야기·대화·ATT&CK: ARTEX · AI 에이전트 · 한국어판 · 웹 침투 · LLM 악성코드 · AI 코딩 도구 · 리눅스 · 자리 잡기 · 오탐 · 파서)
 ├─ tools/                규칙 문서 자동 생성 (gen_rules_doc.py)
 ├─ config.json           탐지 기준 · ARTEX IOC · 감시 목록
 ├─ static/               대시보드 화면 (index.html, A1_D.jpg)
@@ -405,11 +421,16 @@ DDS/
 
 중요 파일 변조 감시 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 날짜별 로그와 30일 보관. 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
 
-### v1.3 후보
+### v1.3 — 반영 완료 (2026-11-08)
+
+침입 이야기 · AI 분석관 대화창 · MITRE ATT&CK 연결. 자세한 내용은 [CHANGELOG.md](CHANGELOG.md).
+
+### v1.4 후보
 | 항목 | 이유 |
 |---|---|
+| **관계 그래프 (피벗 서치)** | 침입 이야기를 IP → 계정 → 프로세스 → 파일 → 외부 서버 노드·선으로 그리기 (데이터는 이미 있음) |
 | **auditd 연동 (Linux)** | 2초 폴링은 1초 안에 끝나는 명령을 놓칠 수 있음 — auditd 기록을 읽으면 빠짐없이 잡음 |
-| **일일 요약 리포트** | 하루 한 번 경보 건수·차단 IP·상위 규칙을 파일(또는 웹훅)로 |
+| **일일 요약 리포트** | 하루 한 번 경보 건수·차단 IP·상위 규칙·ATT&CK 전술 분포를 파일(또는 웹훅)로 |
 | **README 영문판 분리** | 해외 검색 노출 |
 | **Windows 실제 PC 검증** | 4688·4104·4663·Sysmon 읽기, netsh 차단·해제, 긴급 격리, 알림 전송을 실제 Windows 에서 확인 (지금까지는 시뮬레이션) |
 | **오탐 조정** | 며칠 운영한 기록으로 기준값 조정, AI 도구 토큰 경로(`secret_markers`) 실제 확인 |

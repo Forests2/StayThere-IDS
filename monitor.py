@@ -1,6 +1,7 @@
 """감시 루프(백그라운드 스레드)와 침입 시뮬레이션"""
 import socket
 import threading
+import os
 import time
 from datetime import datetime
 
@@ -53,6 +54,7 @@ class Monitor:
                         "ps4104": False, "webroot": 0, "autorun": False}
         self.recent_proc = {}     # pid → (이름, 시각): 4688 · Sysmon · psutil 이 같은 프로세스를 두 번 보고하지 않게
         self.recent_net = {}      # (방향, 원격 IP, 원격 포트, 내 포트) → 시각: Sysmon 3 · psutil 중복 제거
+        self.self_pid = os.getpid()   # DDS 자신 (자기가 띄운 powershell·netsh 는 탐지 제외)
         self.group_seen = {}      # v1.2 (규칙, 대상, IP) → (경보 id, 마지막 시각): 반복 경보 묶기
         self.group_sec = int(cfg.get("alert_group_sec", 600) or 0)
         self.baseline = Baseline(cfg, db)
@@ -99,6 +101,11 @@ class Monitor:
             self.recent_proc = {k: v for k, v in self.recent_proc.items() if now - v[1] < 120}
         if "ancestors" not in p and p.get("ppid"):
             p["ancestors"] = ancestors(p["ppid"])
+        # DDS 자신이 띄운 프로세스(알림용 powershell · netsh · iptables 등)는 기록만 하고 탐지하지 않음
+        if not sim and (p.get("ppid") == self.self_pid or any(a.get("pid") == self.self_pid for a in p.get("ancestors") or [])):
+            p["dds_self"] = True
+            self.db.add_event(self.host, "process", p, sim=sim)
+            return
         self.db.add_event(self.host, "process", p, sim=sim)
         self._emit(det.on_process(p), sim=sim)
         if not sim:

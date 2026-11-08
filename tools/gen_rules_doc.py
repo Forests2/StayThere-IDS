@@ -5,7 +5,7 @@ import sys
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
-from attack_taxonomy import BLOCK_RULES, INTRUSION_RULES, KILL_RULES, RULE_INFO, RULE_TAXONOMY  # noqa: E402
+from attack_taxonomy import BLOCK_RULES, INTRUSION_RULES, KILL_RULES, RULE_INFO, RULE_TAXONOMY, attack_of  # noqa: E402
 
 V1019 = {"artex_host_artifact", "artex_user_agent", "js_asset_burst", "ioc_domain_query", "agent_command_style",
          "retry_loop", "credential_dump", "privilege_escalation", "payload_staging", "distributed_ips",
@@ -27,18 +27,23 @@ def main():
            "🆕¹·¹ = v1.1 (2026-10-21, 금융권 공격 유형 · LLM 을 부르는 악성코드 · AI 코딩 도구 공격 · 랜섬웨어 · 공급망), "
            "🆕¹·² = v1.2 (2026-10-22, 중요 파일 변조 · 브라우저 탈취 · C2 비콘 · 경보 묶기 · 기록 보관). "
            "근거: [CHANGELOG](../CHANGELOG.md) · [최신 위협 정보 정리](THREAT_NOTES_2026-10-19.md)",
+           "- **MITRE ATT&CK** 열은 🆕¹·³ (2026-11-08) 규칙마다 가장 가까운 기법 ID 와 전술. `critical_file_change` 는 바뀐 파일에 따라 "
+           "ld.so.preload → T1574.006, authorized_keys → T1098.004, sudoers → T1548.003, pam.d → T1556.003 등으로 달라짐 (`attack_taxonomy.attack_of`). "
+           "대시보드의 규칙 리포트 · 침입 기록 · 공격 흐름에도 같은 ID 가 붙고, 누르면 attack.mitre.org 로 감.\n"
            "- **공격 분류**는 [AIPFL-IDS](https://github.com/PrathamWankhade/AIPFL-IDS) 가 쓰는 데이터셋 라벨"
            "(NF-ToN-IoT-V2 / CICIoT2023)에 맞춰 붙였습니다. 데이터셋에 해당 개념이 없는 규칙은 `-` 로 표시합니다.", ""]
     groups = list(dict.fromkeys(g for g, _, _ in RULE_INFO.values()))
     for g in groups:
-        out += [f"## {g}", "", "| 규칙 | 심각도 | 언제 걸리나 | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |", "|---|---|---|---|---|"]
+        out += [f"## {g}", "", "| 규칙 | 심각도 | 언제 걸리나 | MITRE ATT&CK | 공격 분류 (NF-ToN-IoT-V2) | CICIoT2023 라벨 |", "|---|---|---|---|---|---|"]
         for r, (gg, sev, desc) in RULE_INFO.items():
             if gg != g:
                 continue
             ko, nf, cic = RULE_TAXONOMY[r]
             mark = (" ★" if r in INTRUSION_RULES else "") + (" 🛡" if r in BLOCK_RULES else "") + \
                    (" ⛔" if r in KILL_RULES else "") + (" 🆕" if r in V1019 else "") + (" 🆕¹·¹" if r in V11 else "") + (" 🆕¹·²" if r in V12 else "")
-            out.append(f"| `{r}`{mark} | {sev} | {desc} | {f'{ko} · **{nf}**' if nf else ko} | {cic or '-'} |")
+            at = attack_of(r)
+            att = f"[{at['id']}]({at['url']}) {at['tactic']}" if at else "-"
+            out.append(f"| `{r}`{mark} | {sev} | {desc} | {att} | {f'{ko} · **{nf}**' if nf else ko} | {cic or '-'} |")
         out.append("")
     j = lambda k: ", ".join(map(str, c.get(k, [])))
     rows = [

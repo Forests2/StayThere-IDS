@@ -553,8 +553,23 @@ class RuleDetector:
         exe = (f.get("exe") or "").lower()
         # v1.2 중요 파일 변조 (CriticalFileCollector) — passwd·sudoers·ld.so.preload·authorized_keys·hosts·예약 작업
         if f.get("source") == "integrity":
-            if self._once("critical_file_change", (path, f.get("change")), now, 60):
-                ch = f.get("change")
+            ch = f.get("change")
+            body = ((f.get("value") or "") + " " + (f.get("removed") or "")).lower()
+            if "\\tasks\\" in path:              # Windows 예약 작업 폴더
+                # 윈도우 자체 작업(Microsoft\Windows\…)이 '바뀐' 건 OS 가 늘 하는 일 → 내용이 수상할 때만
+                sus = any(k in body for k in ("powershell", "cmd.exe", "wscript", "cscript", "mshta", "rundll32", "regsvr32",
+                                               "certutil", "bitsadmin", "\\temp\\", "\\public\\", "appdata", "-enc", "-e ",
+                                               "http://", "https://", ".ps1", ".vbs", ".js", ".bat", ".hta", "curl", "wget"))
+                ms = "\\tasks\\microsoft\\windows\\" in path
+                if ms and ch == "modified" and not sus:
+                    return alerts                   # 윈도우 자체 작업 갱신 → 기록만
+                if ch == "deleted":
+                    return alerts
+                sev = "HIGH" if (sus or (ch == "created" and not ms)) else "MEDIUM"
+                if self._once("critical_file_change", (path, ch), now, 60):
+                    alerts.append((sev, "critical_file_change", f.get("path"), {**f, "task_suspicious": sus}))
+                return alerts
+            if self._once("critical_file_change", (path, ch), now, 60):
                 sev = "HIGH"
                 if ch == "modified" and not f.get("value") and not f.get("removed") and not f.get("mode"):
                     sev = "MEDIUM"          # 내용 줄 변화 없음 (공백·순서) → 확인만

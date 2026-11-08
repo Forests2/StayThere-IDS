@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psutil
 
-from attack_taxonomy import AI_ATTACK_RULES, INTRUSION_RULES, RULE_INFO, chain, classify
+from attack_taxonomy import AI_ATTACK_RULES, INTRUSION_RULES, RULE_INFO, attack_of, chain, classify
 from osutil import IS_LINUX
 from responder import blocked_list, firewall_block, firewall_unblock, kill_tree
 from responder import valid_ip as _valid_ip
@@ -437,7 +437,7 @@ def _llm_brief(incident):
 
 def build_incident(mode, rows, local=()):
     steps = [{"ts": a["ts"][11:19], "rule": a["rule"], "sev": a["severity"], "text": describe(a),
-              "cat": classify(a["rule"])}
+              "cat": classify(a["rule"]), "attack": attack_of(a["rule"], a.get("detail"))}
              for a in rows][-12:]
     attack_chain = chain([a["rule"] for a in rows])
     sim = any(a["sim"] for a in rows)
@@ -649,7 +649,7 @@ def api_history(mon, q):
                      "tag": d.get("tag"), "level": d.get("level", "intrusion"), "judge": d.get("judge"), "chain": d.get("chain", []), "facts": d.get("facts", []),
                      "steps": d.get("steps", [])})
     alerts = [{"ts": a["ts"].replace("T", " "), "sev": a["severity"], "rule": a["rule"], "who": a["who"],
-               "text": describe(a), "cat": classify(a["rule"]), "sim": a["sim"]}
+               "text": describe(a), "cat": classify(a["rule"]), "sim": a["sim"], "attack": attack_of(a["rule"], a.get("detail"))}
               for a in mon.db.alerts_query(_since(days), ["HIGH", "MEDIUM", "LOW"], sim)
               if a["rule"] in INTRUSION_RULES or a["rule"] == "off_hours_logon"]   # 외부 침입 관련만
     return {"incidents": incs, "alerts": alerts}
@@ -768,7 +768,7 @@ def api_rules(mon):
     out = []
     for rule, (group, sev, desc) in RULE_INFO.items():
         s = stats.get(rule, {"real": 0, "sim": 0, "last": ""})
-        out.append({"rule": rule, "group": group, "sev": sev, "desc": desc, "cat": classify(rule),
+        out.append({"rule": rule, "group": group, "sev": sev, "desc": desc, "cat": classify(rule), "attack": attack_of(rule),
                     "today": today.get(rule, 0), "real7": s["real"], "sim7": s["sim"],
                     "last": s["last"].replace("T", " ")})
     bl = getattr(mon, "baseline", None)
@@ -872,6 +872,15 @@ def make_handler(mon, port):
                 if path == "/api/llm":
                     import llm
                     return self._send(200, llm.status())
+                if path == "/api/stories":          # v1.3 IP 별 침입 이야기 목록
+                    import story
+                    return self._send(200, story.all_ips(mon.db, days=int(q.get("days", "7") or 7),
+                                                         include_sim=q.get("sim", "1") == "1", describe=describe))
+                if path == "/api/story":            # v1.3 침입 이야기
+                    from urllib.parse import unquote
+                    import story
+                    hours = int(q.get("hours", "72") or 72)
+                    return self._send(200, story.build(mon.db, unquote(q.get("ip", "")), hours=hours, describe=describe))
                 if path == "/api/ipcheck":
                     from urllib.parse import unquote
                     from ip_check import investigate
@@ -903,6 +912,14 @@ def make_handler(mon, port):
             except Exception:
                 body = {}
             path = self.path.split("?")[0]
+            if path == "/api/ask":                   # v1.3 AI 분석관 대화
+                import analyst
+                try:
+                    r = analyst.ask(mon, body.get("question", ""), body.get("history") or [], describe=describe,
+                                    use_llm=body.get("use_llm", True))
+                except Exception as e:
+                    r = {"ok": False, "msg": str(e)[:300]}
+                return self._send(200, r)
             if path == "/api/simulate":
                 kind = body.get("type")
                 if kind not in ("ai", "hacker", "net", "agent", "web", "llm", "linux", "persist"):

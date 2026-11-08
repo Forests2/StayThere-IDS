@@ -185,3 +185,87 @@ def chain(rules):
     """발동 규칙 → 중복 없는 공격 단계, 진행 순서대로 (예: Scanning → Injection → Backdoor)"""
     found = {RULE_TAXONOMY.get(r, (None, None, None))[1] for r in rules} - {None}
     return [s for s in STAGE_ORDER if s in found]
+
+
+# ================= v1.3 (2026-11-08) — MITRE ATT&CK 연결표 =================
+# 규칙 → (전술 한국어, 기법 ID, 기법 이름). ID 를 누르면 https://attack.mitre.org/techniques/<ID 의 . 을 / 로>/
+ATTACK = {
+    "brute_force":             ("자격 증명 접근", "T1110",     "Brute Force"),
+    "remote_rdp_logon":        ("초기 침투",     "T1021.001", "Remote Desktop Protocol / SSH"),
+    "remote_network_logon":    ("측면 이동",     "T1021.002", "SMB/Windows Admin Shares"),
+    "off_hours_logon":         ("초기 침투",     "T1078",     "Valid Accounts"),
+    "user_created":            ("지속",          "T1136.001", "Create Account: Local Account"),
+    "added_to_admin_group":    ("권한 상승",     "T1098",     "Account Manipulation"),
+    "ioc_ip_match":            ("명령 제어",     "T1071",     "Application Layer Protocol"),
+    "port_scan":               ("정찰",          "T1046",     "Network Service Discovery"),
+    "webserver_spawned_shell": ("지속",          "T1505.003", "Server Software Component: Web Shell"),
+    "devserver_spawned_shell": ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "recon_burst":             ("탐색",          "T1082",     "System Information Discovery"),
+    "shell_burst":             ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "threat_feed_match":       ("명령 제어",     "T1071",     "Application Layer Protocol"),
+    "lolbin_outbound":         ("명령 제어",     "T1105",     "Ingress Tool Transfer"),
+    "outbound_scan":           ("탐색",          "T1046",     "Network Service Discovery"),
+    "risky_port_inbound":      ("초기 침투",     "T1133",     "External Remote Services"),
+    "odd_port_outbound":       ("명령 제어",     "T1571",     "Non-Standard Port"),
+    "new_inbound_ip":          ("초기 침투",     "T1133",     "External Remote Services"),
+    "ai_spawned_shell":        ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "ai_api_connection":       ("명령 제어",     "T1102",     "Web Service"),
+    "ai_web_usage":            ("-",             "",          ""),
+    "browser_automation":      ("수집",          "T1185",     "Browser Session Hijacking"),
+    "ai_program_started":      ("-",             "",          ""),
+    "ai_script_started":       ("-",             "",          ""),
+    "local_llm_server":        ("-",             "",          ""),
+    "artex_host_artifact":     ("실행",          "T1588.002", "Obtain Capabilities: Tool"),
+    "artex_user_agent":        ("정찰",          "T1595.002", "Active Scanning: Vulnerability Scanning"),
+    "js_asset_burst":          ("정찰",          "T1595.003", "Active Scanning: Wordlist Scanning"),
+    "ioc_domain_query":        ("명령 제어",     "T1071.004", "Application Layer Protocol: DNS"),
+    "agent_command_style":     ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "retry_loop":              ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "credential_dump":         ("자격 증명 접근", "T1003",     "OS Credential Dumping"),
+    "privilege_escalation":    ("권한 상승",     "T1134.001", "Access Token Manipulation: Token Impersonation"),
+    "payload_staging":         ("방어 회피",     "T1140",     "Deobfuscate/Decode Files or Information"),
+    "distributed_ips":         ("초기 침투",     "T1110.004", "Brute Force: Credential Stuffing"),
+    "dev_tool_inbound":        ("초기 침투",     "T1133",     "External Remote Services"),
+    "dev_tool_exposed":        ("초기 침투",     "T1133",     "External Remote Services"),
+    "local_agent_command":     ("-",             "",          ""),
+    "baseline_anomaly":        ("-",             "",          ""),
+    "webshell_file_created":   ("지속",          "T1505.003", "Server Software Component: Web Shell"),
+    "object_enumeration":      ("수집",          "T1213",     "Data from Information Repositories"),
+    "log_theft":               ("수집",          "T1560",     "Archive Collected Data"),
+    "llm_malware_pattern":     ("명령 제어",     "T1102",     "Web Service"),
+    "llm_then_exec":           ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "autorun_change":          ("지속",          "T1547.001", "Boot or Logon Autostart: Registry Run Keys / Startup Folder"),
+    "ransomware_prep":         ("영향",          "T1490",     "Inhibit System Recovery"),
+    "mass_file_change":        ("영향",          "T1486",     "Data Encrypted for Impact"),
+    "git_spawned_unusual":     ("실행",          "T1059",     "Command and Scripting Interpreter"),
+    "package_install_exec":    ("초기 침투",     "T1195.001", "Supply Chain Compromise: Software Dependencies"),
+    "agent_secret_access":     ("자격 증명 접근", "T1552.001", "Unsecured Credentials: Credentials In Files"),
+    "critical_file_change":    ("지속",          "T1098.004", "Account Manipulation: SSH Authorized Keys"),
+    "browser_hijack":          ("수집",          "T1185",     "Browser Session Hijacking"),
+    "c2_beacon":               ("명령 제어",     "T1071",     "Application Layer Protocol"),
+}
+# 중요 파일 변조는 바뀐 파일에 따라 기법이 다름
+ATTACK_BY_PATH = [("ld.so.preload", ("지속", "T1574.006", "Hijack Execution Flow: Dynamic Linker Hijacking")),
+                  ("authorized_keys", ("지속", "T1098.004", "Account Manipulation: SSH Authorized Keys")),
+                  ("sudoers", ("권한 상승", "T1548.003", "Abuse Elevation Control Mechanism: Sudo and Sudo Caching")),
+                  ("pam.d", ("자격 증명 접근", "T1556.003", "Modify Authentication Process: Pluggable Authentication Modules")),
+                  ("sshd_config", ("지속", "T1021.004", "Remote Services: SSH")),
+                  ("passwd", ("지속", "T1136.001", "Create Account: Local Account")),
+                  ("shadow", ("자격 증명 접근", "T1003.008", "OS Credential Dumping: /etc/passwd and /etc/shadow")),
+                  ("hosts", ("영향", "T1565.001", "Data Manipulation: Stored Data Manipulation")),
+                  ("tasks", ("지속", "T1053.005", "Scheduled Task/Job: Scheduled Task"))]
+
+
+def attack_of(rule, detail=None):
+    """규칙(과 상세)에 맞는 ATT&CK → {"tactic", "id", "name", "url"} 또는 None"""
+    hit = ATTACK.get(rule)
+    if rule == "critical_file_change" and isinstance(detail, dict):
+        p = (detail.get("path") or "").lower()
+        for key, v in ATTACK_BY_PATH:
+            if key in p:
+                hit = v
+                break
+    if not hit or not hit[1]:
+        return None
+    tac, tid, name = hit
+    return {"tactic": tac, "id": tid, "name": name, "url": "https://attack.mitre.org/techniques/" + tid.replace(".", "/") + "/"}

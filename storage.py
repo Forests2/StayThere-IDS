@@ -193,6 +193,36 @@ class Storage:
         events = self._rows("SELECT * FROM events WHERE data LIKE ? ORDER BY id DESC LIMIT ?", (pat, limit))
         return alerts, events
 
+    # ---------- v1.3: 침입 이야기 · AI 분석관 대화 ----------
+    def events_between(self, lo, hi, kinds=("process",), limit=5000):
+        marks = ",".join("?" * len(kinds))
+        return self._rows(f"SELECT * FROM events WHERE ts>=? AND ts<=? AND kind IN ({marks}) ORDER BY id ASC LIMIT ?",
+                          (lo, hi, *kinds, limit))
+
+    def search(self, text, since_ts, limit=200):
+        """경보·이벤트에서 문자열(IP · 프로세스 이름 · 규칙 · 파일 경로 · 계정) 검색"""
+        pat = f"%{text}%"
+        alerts = self._rows("SELECT * FROM alerts WHERE ts>=? AND (who LIKE ? OR rule LIKE ? OR detail LIKE ?) ORDER BY id DESC LIMIT ?",
+                            (since_ts, pat, pat, pat, limit))
+        events = self._rows("SELECT * FROM events WHERE ts>=? AND data LIKE ? ORDER BY id DESC LIMIT ?",
+                            (since_ts, pat, limit))
+        return alerts, events
+
+    def summary(self, since_ts):
+        """기간 요약: 경보 수(심각도별) · 규칙별 · IP 별 · 사건 수"""
+        with self.lock:
+            sev = {r["severity"]: r["c"] for r in self.conn.execute(
+                "SELECT severity, COUNT(*) c FROM alerts WHERE ts>=? AND sim=0 GROUP BY severity", (since_ts,))}
+            rules = [dict(r) for r in self.conn.execute(
+                "SELECT rule, COUNT(*) c, SUM(count) n FROM alerts WHERE ts>=? AND sim=0 GROUP BY rule ORDER BY c DESC LIMIT 15",
+                (since_ts,))]
+            who = [dict(r) for r in self.conn.execute(
+                "SELECT who, rule, COUNT(*) c FROM alerts WHERE ts>=? AND sim=0 AND severity='HIGH' GROUP BY who, rule ORDER BY c DESC LIMIT 15",
+                (since_ts,))]
+            inc = self.conn.execute("SELECT COUNT(*) c FROM incidents WHERE ts>=? AND sim=0", (since_ts,)).fetchone()["c"]
+            ev = self.conn.execute("SELECT COUNT(*) c FROM events WHERE ts>=?", (since_ts,)).fetchone()["c"]
+        return {"severity": sev, "rules": rules, "who": who, "incidents": inc, "events": ev}
+
     def count_alerts_today(self):
         day = datetime.now().strftime("%Y-%m-%d")
         with self.lock:
